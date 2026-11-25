@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>
+if (!window.crypto) window.crypto = {};
+if (!window.crypto.randomUUID) {
+  window.crypto.randomUUID = function() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
+}
+</script>
+
+  <script>window.open = function () {}; window.NOSW = true;</script>
+<script src="poki-sdk.js"></script>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<link rel="preload" href="fonts/baloo2-700.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/goose-emoji.woff2" as="font" type="font/woff2" crossorigin>
+<title>Goose Taxi</title>
+<style>
+  /* self-hosted (public/fonts, latin subsets from Google Fonts): no third-party
+     round trips on the critical path, and Poki-safe. swap: the fallback stack
+     paints first, so boot is never blocked on a font. */
+  /* ONE emoji look on every OS (Poki review 2026-10-09, point 4): a Twemoji subset of exactly the
+     emoji the game shows (scripts/emoji-font.py, 18 KB, COLRv0 — Safari/iOS draw it too). The
+     unicode-range keeps it to those codepoints, so Baloo still draws every letter, digit and arrow.
+     Regenerate the font AND this range when an emoji is added (test/emojifont.test.ts checks). */
+  @font-face { font-family: 'Goose Emoji'; font-style: normal; font-weight: 100 900; font-display: swap; src: url(fonts/goose-emoji.woff2) format('woff2');
+    unicode-range: U+200D, U+21A9, U+2328, U+23F1, U+23F8, U+25B6, U+2600, U+2601, U+2602, U+2699, U+26A1, U+26C8, U+2728, U+2754, U+2757, U+2764, U+27A1, U+2B05, U+2B06, U+2B07, U+2B50, U+FE0F, U+1F300, U+1F324, U+1F327, U+1F328, U+1F338, U+1F381, U+1F389, U+1F3A2, U+1F3A8, U+1F3AC, U+1F3AE, U+1F3B5, U+1F3C3, U+1F415, U+1F416, U+1F422, U+1F436, U+1F437, U+1F43E, U+1F446, U+1F44B, U+1F452, U+1F494, U+1F496, U+1F49B, U+1F4A8, U+1F4AB, U+1F4D6, U+1F4DE, U+1F4E2, U+1F4E6, U+1F4FB, U+1F503, U+1F504, U+1F50A, U+1F512, U+1F525, U+1F5B1, U+1F608, U+1F60A, U+1F60C, U+1F614, U+1F61C, U+1F61F, U+1F621, U+1F62E, U+1F630, U+1F631, U+1F635, U+1F6B6, U+1F90D, U+1F911, U+1F91D, U+1F922, U+1F95A, U+1F970, U+1F98A, U+1F98C, U+1F999, U+1F9BA, U+1F9F3, U+1FA82, U+1FA99, U+1FAB6, U+1FABD, U+1FABF; }
+  @font-face { font-family: 'Baloo 2'; font-style: normal; font-weight: 600; font-display: swap; src: url(fonts/baloo2-600.woff2) format('woff2'); }
+  @font-face { font-family: 'Baloo 2'; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/baloo2-700.woff2) format('woff2'); }
+  @font-face { font-family: 'Baloo 2'; font-style: normal; font-weight: 800; font-display: swap; src: url(fonts/baloo2-800.woff2) format('woff2'); }
+  :root {
+    --taxi: #f7b81d; --taxi-dark: #e09a10; --navy: #1d3557; --cream: #fdf6e5;
+    --gold-line: #e8a51f; --card-sky: #bfe6ff; --card-sky2: #e6f6ff; --paper: #fff3d6;
+  }
+  canvas { cursor: none; } /* the goose IS the pointer — hide the arrow over the game */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #7cc4f0; touch-action: none;
+    font-family: 'Goose Emoji', 'Baloo 2', 'Arial Rounded MT Bold', 'Nunito', system-ui, sans-serif; font-size: 16px; }
+  .checker {
+    background-image: repeating-linear-gradient(90deg, #1a1a1a 0 10px, #fff 10px 20px);
+  }
+  #hud { position: fixed; left: 14px; top: 12px; user-select: none; pointer-events: none; }
+  #rating {
+    display: none; width: max-content; margin-top: 6px; font-size: 13.5px; font-weight: 800; color: var(--navy);
+    background: var(--cream); border: 2px solid var(--gold-line); border-radius: 12px; padding: 4px 10px;
+  }
+  #stats {
+    position: fixed; right: 14px; top: 12px; text-align: right; user-select: none; pointer-events: none;
+    background: var(--cream); border: 2px solid var(--gold-line); border-radius: 14px;
+    padding: 8px 16px; color: var(--navy); font-size: 15px; font-weight: 700;
+    box-shadow: 0 3px 8px rgba(20,40,70,0.25); line-height: 1.5;
+  }
+  #stats b { font-size: 23px; font-weight: 800; }
+  #vane {
+    position: fixed; left: 14px; bottom: 14px; display: flex; align-items: center; gap: 8px; user-select: none; pointer-events: none;
+    background: var(--cream); border: 2px solid var(--gold-line); border-radius: 14px; padding: 6px 12px 6px 8px;
+    color: var(--navy); font-size: 13.5px; font-weight: 700; box-shadow: 0 3px 8px rgba(20,40,70,0.25);
+  }
+  #vane div { display: flex; flex-direction: column; gap: 1px; }
+  #vane b { font-size: 16px; text-transform: capitalize; }
+  #vane b.pulse { animation: vanepulse .5s; }
+  @keyframes vanepulse { 40% { transform: scale(1.25); color: #d4880c; } }
+  #vane span { color: #8a7c62; font-size: 13px; }
+  #vane-arrow { transition: transform .35s ease-out; }
+  #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 5; }
+
+  #combo { color: #d4880c; }
+  #happy {
+    position: fixed; right: 14px; top: 134px; display: none; user-select: none; pointer-events: none;
+    background: var(--cream); border: 2px solid var(--gold-line); border-radius: 14px;
+    padding: 8px 12px; box-shadow: 0 3px 8px rgba(20,40,70,0.25);
+  }
+  .happy-row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .happy-row span { font-size: 15px; font-weight: 700; color: var(--navy); min-width: 38px; }
+  .happy-name { min-width: 86px !important; white-space: nowrap; font-size: 13px !important; }
+  .happy-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    border: 1.5px solid rgba(29,53,87,0.4); margin: 0 1px 0 3px; vertical-align: baseline; }
+  .happy-cause { font-size: 14px; line-height: 1; min-width: 18px !important; opacity: 0.75; }
+  .happy-cause.bad { opacity: 1; animation: causePulse 0.9s ease-in-out infinite; }
+  .happy-why { font-size: 12.5px; font-weight: 700; color: var(--navy); opacity: 0.7; margin: -1px 0 3px 2px; }
+  .happy-why.bad { opacity: 1; color: #c0392b; }
+  @keyframes causePulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.35); } }
+  .happy-bar {
+    width: 92px; height: 10px; border-radius: 6px; background: rgba(29,53,87,0.15);
+    border: 1.5px solid rgba(232,165,31,0.5); overflow: hidden;
+  }
+  .happy-fill { height: 100%; border-radius: 5px; transition: width 0.3s, background 0.3s; }
+  .happy-mood { font-size: 15px; line-height: 1; }
+  #invert-toggle, #mouselock-toggle {
+    cursor: pointer; margin-bottom: 2px;
+    font-family: inherit; font-size: 12.5px; font-weight: 700; color: var(--navy);
+    background: #fff; border: 2px solid var(--gold-line); border-radius: 12px; padding: 8px 12px;
+  }
+  #invert-toggle:hover, #mouselock-toggle:hover { background: var(--cream); }
+  #pause-footer {
+    display: flex; gap: 10px; margin: 6px -30px -24px; padding: 14px 30px 18px;
+    background: rgba(232, 165, 31, 0.12); border-top: 2px solid var(--gold-line); border-radius: 0 0 19px 19px;
+  }
+  #pause-footer button { flex: 1; }
+  #pause-privacy { flex: 0 0 auto; font-size: 13px; text-decoration: none; opacity: 0.55; align-self: center; padding: 0 4px; }
+  #bonk { position: fixed; inset: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(120,40,20,0.35)); opacity: 0; pointer-events: none; transition: opacity 0.12s; }
+  #mist { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, rgba(225,230,238,0.88) 30%, rgba(200,208,220,0.97)); transition: opacity 0.25s; }
+  #mist.storm { background: radial-gradient(ellipse at center, rgba(34,37,44,0.86) 30%, rgba(14,15,19,0.97)); }
+  #speedfx { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 52%, rgba(20, 35, 60, 0.55)); transition: opacity 0.15s; }
+  /* rain on the lens: eight composited streaks, shown only while it rains below the deck */
+  #lens { position: fixed; inset: 0; pointer-events: none; overflow: hidden; opacity: 0; transition: opacity 0.6s; }
+  #lens.on { opacity: 1; }
+  #lens i { position: absolute; top: -12%; width: 2px; height: 9%; border-radius: 2px; background: linear-gradient(rgba(255,255,255,0), rgba(235,240,255,0.55) 60%, rgba(255,255,255,0.15)); animation: lensdrop linear infinite; will-change: transform; }
+  #lens.on i { animation-play-state: running; } #lens:not(.on) i { animation-play-state: paused; }
+  @keyframes lensdrop { to { transform: translateY(1300%); } }
+  #vignette { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 40%, rgba(8, 10, 16, 0.85)); transition: opacity 0.4s; }
+  /* one crisp shadow: the old glow (0 0 14px) + two more shadows + a stroke were
+     re-rasterised on every frame of the scale pulse — a weak-GPU tax for most of every fare */
+  #edge-marker { position: fixed; left: 0; top: 0; display: none; pointer-events: none; z-index: 5; color: var(--taxi); font-size: 52px; font-weight: bold; -webkit-text-stroke: 2px rgba(255,255,255,0.9); text-shadow: 0 2px 3px rgba(0,0,0,0.55); will-change: transform; }
+  #edge-marker span { display: inline-block; animation: edge-pulse 0.9s ease-in-out infinite; }
+  @keyframes edge-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.25); } }
+  .bubble {
+    position: fixed; left: 0; top: 0; pointer-events: none; z-index: 4; opacity: 0;
+    line-height: 1.2; background: rgba(255,255,255,0.95);
+    border: 2px solid rgba(232,165,31,0.6);
+    box-shadow: 0 2px 5px rgba(23,54,77,0.25); transition: opacity 0.18s; will-change: transform;
+  }
+  .bubble.thought { /* comic thought bubble: big puff + two shrinking trail-puffs to the head */
+    font-size: 20px; padding: 7px 9px; border-radius: 50%;
+  }
+  .bubble.thought::after { /* the middle puff, ~1/3 size */
+    content: ''; position: absolute; left: 4px; bottom: -14px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: rgba(255,255,255,0.95); border: 2px solid rgba(232,165,31,0.6);
+    box-shadow: 0 2px 4px rgba(23,54,77,0.2);
+  }
+  .bubble.thought::before { /* the smallest puff, nearest the head */
+    content: ''; position: absolute; left: 0px; bottom: -24px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(255,255,255,0.95); border: 2px solid rgba(232,165,31,0.6);
+  }
+  .bubble.speech { /* a proper comic speech bubble for the one-liners */
+    font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--navy);
+    padding: 6px 11px; border-radius: 13px 13px 13px 3px;
+    max-width: 200px; width: max-content; white-space: normal; text-align: center;
+  }
+  #shift {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(23, 54, 77, 0.5); z-index: 11;
+  }
+  #farehand {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    flex-direction: column; gap: 20px; background: rgba(23, 54, 77, 0.5); z-index: 10;
+  }
+  #farehand h2 {
+    margin: 0; color: #fff; font-size: 24px; font-weight: 700;
+    background: linear-gradient(#ffd34e, var(--taxi) 60%, var(--taxi-dark));
+    border: 3px solid #a86f06; border-radius: 16px; padding: 12px 30px;
+    text-shadow: 0 2px 0 rgba(29,53,87,0.85); box-shadow: 0 6px 16px rgba(10,25,45,0.45);
+  }
+  #farehand-cards { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; }
+  .fare-card {
+    width: 232px; padding: 0; border-radius: 20px; border: 3px solid var(--gold-line);
+    background: #fff; cursor: pointer; display: flex; flex-direction: column; text-align: center;
+    font-family: inherit; overflow: hidden; box-shadow: 0 6px 14px rgba(10,25,45,0.35);
+    transition: transform 0.14s, box-shadow 0.14s;
+  }
+  .fare-card:hover { transform: translateY(-6px) scale(1.02); box-shadow: 0 12px 22px rgba(10,25,45,0.45); border-color: #ffd34e; }
+  .fare-card.golden {
+    border-color: #ffd34e;
+    background: linear-gradient(#fffbe8, #ffedb0);
+    box-shadow: 0 0 18px rgba(255, 211, 78, 0.75), 0 6px 14px rgba(10,25,45,0.35);
+  }
+  .fare-card b { font-size: 21px; color: var(--navy); padding: 10px 8px 2px; background: linear-gradient(var(--card-sky2), var(--card-sky)); }
+  .fare-art { font-size: 52px; line-height: 1.15; position: relative; background: linear-gradient(var(--card-sky), #a9dcff); padding-bottom: 6px; }
+  .fare-art i { font-style: normal; font-size: 16px; font-weight: 800; color: #a86f06; }
+  .fare-card span { font-size: 14.5px; font-weight: 600; color: #3f3628; padding: 9px 12px; flex: 1; background: var(--paper); line-height: 1.25; }
+  .fare-tags { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; padding: 7px 8px 9px; background: var(--paper); }
+  .fare-tags em {
+    font-style: normal; font-size: 12.5px; font-weight: 700; color: var(--navy);
+    background: #fff; border: 2px solid var(--gold-line); border-radius: 10px; padding: 3px 9px;
+  }
+  .fare-tags em.special { background: linear-gradient(#ffd34e, #e8a51f); border-color: #b97e08; color: #6b4a00; }
+  .fare-foot { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: linear-gradient(#fff, #fff2cf); border-top: 2px solid var(--gold-line); }
+  .fare-foot i { font-style: normal; font-size: 14px; }
+  .fare-foot em.pay { font-style: normal; font-size: 17px; font-weight: 800; color: #a86f06; }
+  #farehand-actions { display: flex; gap: 14px; }
+  #farehand-actions button {
+    font-family: inherit; font-size: 14px; font-weight: 700; color: #fff; cursor: pointer;
+    border-radius: 13px; padding: 10px 22px; border: 2px solid rgba(0,0,0,0.25);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.25); transition: transform 0.12s;
+  }
+  #farehand-actions button:hover:not(:disabled) { transform: translateY(-3px); }
+  #farehand-actions button:disabled { opacity: 0.45; cursor: default; }
+  #farehand-reroll { background: linear-gradient(#5db4f7, #2578d1); }
+  #farehand-callback { background: linear-gradient(#f27a9d, #d1387b); }
+  #farehand-skip { background: linear-gradient(#9aa8b8, #64788c); }
+  #shift-panel {
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    background: linear-gradient(#fff8e8, var(--cream)); border: 3px solid var(--gold-line);
+    border-radius: 22px; padding: 26px 34px; min-width: 290px;
+    box-shadow: 0 10px 26px rgba(10,25,45,0.45);
+  }
+  #shift-title { margin: 0; font-size: 21px; font-weight: 700; color: var(--navy); }
+  #shift-coins {
+    font-size: 40px; font-weight: 800; color: #a86f06;
+    text-shadow: 0 2px 0 rgba(255,255,255,0.7);
+  }
+  #shift-sub { font-size: 13px; font-weight: 600; color: #8a7c62; margin-top: -8px; }
+  /* the pay + "earned / purse 🪙 N" stacked beside it: the purse already holds the pay, and
+     a double visibly ticks BOTH up (Poki review 2026-10-14) — no extra row, so the fit holds */
+  #shift-coins { display: flex; align-items: center; justify-content: center; gap: 10px; line-height: 1.1; }
+  #shift-purse-wrap { display: flex; flex-direction: column; align-items: flex-start; font-size: 13px; font-weight: 700; color: #8a7c62; text-shadow: none; line-height: 1.25; }
+  #shift-purse-wrap b { font-size: 15px; color: #a86f06; font-weight: 800; }
+  #shift-collect {
+    font-family: inherit; font-size: 16px; font-weight: 700; color: #fff; cursor: pointer;
+    background: linear-gradient(#6ec95a, #3e8c1d); border: 2px solid #2f6b16;
+    border-radius: 14px; padding: 12px 34px; margin-top: 4px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.25); transition: transform 0.12s;
+  }
+  #shift-collect:hover { transform: translateY(-3px); }
+  #shift-savestreak {
+    font-family: inherit; font-size: 14px; font-weight: 700; color: #fff; cursor: pointer;
+    background: linear-gradient(#f2a03c, #d16a12); border: 2px solid #a4520c;
+    border-radius: 14px; padding: 10px 26px; margin-top: 2px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.25); transition: transform 0.12s;
+  }
+  #shift-savestreak:hover { transform: translateY(-3px); }
+  /* Poki rewarded ads (review point 7): the player's choice, coins only */
+  #shift-savefree, #shift-double {
+    font-family: inherit; font-size: 14px; font-weight: 700; color: #fff; cursor: pointer;
+    background: linear-gradient(#7c8ff5, #4a5bd6); border: 2px solid #2f3ea6;
+    border-radius: 14px; padding: 10px 26px; margin-top: 2px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.25); transition: transform 0.12s;
+  }
+  #review-double {
+    font-family: inherit; font-size: 14px; font-weight: 700; color: #fff; cursor: pointer;
+    background: linear-gradient(#7c8ff5, #4a5bd6); border: 2px solid #2f3ea6;
+    border-radius: 14px; padding: 9px 22px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.25); transition: transform 0.12s;
+  }
+  #shift-savefree:hover:not(:disabled), #shift-double:hover:not(:disabled), #review-double:hover:not(:disabled) { transform: translateY(-3px); }
+  #shift-savefree:disabled, #shift-double:disabled, #review-double:disabled { opacity: 0.6; cursor: default; }
+  #pause {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(23, 54, 77, 0.55); z-index: 13;
+  }
+  #review {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(23, 54, 77, 0.5); z-index: 10;
+  }
+  #review-panel {
+    display: flex; flex-direction: column; gap: 14px; align-items: center;
+    background: linear-gradient(#fff8e8, var(--cream)); border: 3px solid var(--gold-line);
+    border-radius: 22px; padding: 22px 30px; min-width: 290px;
+    box-shadow: 0 10px 26px rgba(10,25,45,0.45);
+  }
+  #review-panel h3 { margin: 0; font-size: 17px; color: #8a7c62; font-weight: 700; }
+  #review-card { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .rev-face { font-size: 54px; animation: revdrop 0.4s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+  .rev-name { font-size: 20px; color: var(--navy); }
+  .rev-stars { font-size: 30px; letter-spacing: 3px; }
+  .rev-star { display: inline-block; opacity: 0; animation: starpunch 0.35s cubic-bezier(0.2, 1.8, 0.4, 1) forwards; }
+  .rev-star.lit { color: #f2b632; text-shadow: 0 2px 0 rgba(168,111,6,0.4); }
+  .rev-star.dim { color: #cfc4a8; }
+  .rev-quote { font-size: 14px; font-style: italic; font-weight: 600; color: #4a4237; max-width: 280px; text-align: center; }
+  .rev-pref {
+    font-size: 12px; font-weight: 800; border-radius: 11px; padding: 4px 12px; border: 2px solid;
+  }
+  .rev-pref.met { color: #2f6b16; background: #e6f5dc; border-color: #6ec95a; }
+  .rev-pref.missed { color: #a4270c; background: #fbe4dc; border-color: #e06a4a; }
+  .rev-hearts { font-size: 21px; min-height: 28px; display: flex; align-items: center; gap: 2px; }
+  .rev-heart.new { opacity: 0; display: inline-block; animation: heartpop 0.45s cubic-bezier(0.2, 1.8, 0.4, 1) forwards; }
+  .rev-noheart { font-size: 12px; font-weight: 600; color: #8a7c62; font-style: italic; }
+  .rev-book { font-size: 13px; font-weight: 600; color: var(--navy); text-align: center; }
+  .rev-book.big {
+    animation: revdrop 0.5s 1.8s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+    background: linear-gradient(#ffd34e, #e8a51f); border: 2px solid #b97e08; color: #6b4a00;
+    border-radius: 12px; padding: 6px 14px;
+  }
+  .rev-pay { font-size: 19px; font-weight: 800; color: #a86f06; }
+  #review-continue {
+    font-family: inherit; font-size: 15px; font-weight: 700; color: #fff; cursor: pointer;
+    background: linear-gradient(#6ec95a, #3e8c1d); border: 2px solid #2f6b16;
+    border-radius: 13px; padding: 11px 30px; text-shadow: 0 1px 0 rgba(0,0,0,0.25);
+    transition: transform 0.12s;
+  }
+  #review-continue:hover { transform: translateY(-3px); }
+  #review-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: center; }
+  @keyframes starpunch { from { opacity: 0; transform: scale(2.4) rotate(-14deg); } to { opacity: 1; transform: scale(1) rotate(0); } }
+  @keyframes heartpop { from { opacity: 0; transform: scale(2.6); } to { opacity: 1; transform: scale(1); } }
+  @keyframes revdrop { from { opacity: 0; transform: translateY(-16px) scale(0.7); } to { opacity: 1; transform: translateY(0) scale(1); } }
+  #pause-panel {
+    display: flex; flex-direction: column; gap: 12px; align-items: stretch;
+    background: linear-gradient(#fff8e8, var(--cream)); border: 3px solid var(--gold-line);
+    border-radius: 22px; padding: 24px 30px; min-width: 260px;
+    box-shadow: 0 10px 26px rgba(10,25,45,0.45);
+  }
+  #pause-panel h3 { margin: 0 0 4px; font-size: 20px; color: var(--navy); text-align: center; }
+  #pause-tabs { display: flex; gap: 6px; }
+  #pause-tabs button {
+    flex: 1; font-family: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+    color: var(--navy); background: var(--cream); border: 2px solid var(--gold-line); border-radius: 10px; padding: 6px 0;
+  }
+  #pause-tabs button.on { color: #fff; background: linear-gradient(#ffd34e, var(--taxi-dark)); border-color: #a86f06; text-shadow: 0 1px 0 rgba(0,0,0,0.25); }
+  #pause-settings, #pause-controls { display: flex; flex-direction: column; gap: 10px; }
+  #pause-controls .ctl {
+    font-size: 12.5px; font-weight: 600; color: var(--navy);
+    background: #fff; border: 2px solid var(--gold-line); border-radius: 12px; padding: 7px 12px;
+  }
+  #pause-music-row, #pause-vol-row {
+    display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--navy);
+    background: #fff; border: 2px solid var(--gold-line); border-radius: 12px; padding: 8px 12px;
+  }
+  #pause-vol-row input, #pause-music-row input { flex: 1; accent-color: var(--taxi); }
+  #pause-gfx-row {
+    display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; color: var(--navy);
+    background: #fff; border: 2px solid var(--gold-line); border-radius: 12px; padding: 8px 12px;
+  }
+  #pause-gfx-row button {
+    flex: 1; font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    color: var(--navy); background: var(--cream); border: 2px solid var(--gold-line); border-radius: 9px; padding: 5px 0;
+  }
+  #pause-gfx-row button.on { color: #fff; background: linear-gradient(#ffd34e, var(--taxi-dark)); border-color: #a86f06; }
+  #pause-vol-row span, #pause-music-row span { min-width: 34px; text-align: right; }
+  #pause-panel button {
+    font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    border-radius: 12px; padding: 9px 16px; transition: transform 0.12s;
+  }
+  #pause-panel button:hover { transform: translateY(-2px); }
+  .pad-focus { outline: 4px solid #2f9cff !important; outline-offset: 3px; box-shadow: 0 0 0 7px rgba(47,156,255,0.35) !important; }
+  #pause-book { color: var(--navy); background: #fff; border: 2px solid var(--gold-line); }
+  #pause-resume { color: #fff; background: linear-gradient(#6ec95a, #3e8c1d); border: 2px solid #2f6b16; text-shadow: 0 1px 0 rgba(0,0,0,0.25); }
+  #shift-gift {
+    display: flex; align-items: center; gap: 14px; width: 100%; box-sizing: border-box; cursor: pointer;
+    background: linear-gradient(#fff3d1, #ffe7a8); border: 3px dashed var(--gold-line); border-radius: 16px; padding: 12px 16px; text-align: left;
+  }
+  #shift-gift.wrapped:hover { background: #fff8e0; }
+  #shift-gift.wrapped .parcel { animation: eggshake 1.2s ease-in-out infinite; }
+  #shift-gift.opened { border-style: solid; cursor: default; background: linear-gradient(#eef9ea, #d9f2d0); border-color: #3e8c1d; }
+  #shift-gift .parcel { font-size: 42px; line-height: 1; transform-origin: 50% 90%; }
+  #shift-gift .ic3d { width: 64px; height: 64px; flex: 0 0 auto; }
+  #shift-gift b { display: block; font-size: 17px; color: var(--navy); }
+  #shift-gift span { display: block; font-size: 13px; color: #8a7c62; font-weight: 600; }
+  #shift-gift em { display: block; font-style: normal; font-size: 12.5px; color: #2c822c; font-weight: 700; margin-top: 2px; }
+  #wardrobe { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(23, 54, 77, 0.6); z-index: 14; /* above #pause (13): opened FROM the pause footer, it must stack on top */ }
+  #wardrobe-panel {
+    display: flex; flex-direction: column; gap: 10px; max-height: 94vh; width: min(94vw, 560px); box-sizing: border-box; overflow: hidden;
+    background: linear-gradient(#fff8e8, var(--cream)); border: 3px solid var(--gold-line); border-radius: 22px; padding: 22px 24px;
+    box-shadow: 0 10px 26px rgba(10,25,45,0.45);
+  }
+  #wardrobe-head { display: flex; align-items: center; justify-content: space-between; }
+  #wardrobe-panel h3 { margin: 0; font-size: 19px; color: var(--navy); }
+  #wardrobe-coins { font-size: 13px; font-weight: 800; color: #a86f06; background: #fff; border: 2px solid var(--gold-line); border-radius: 999px; padding: 3px 11px; }
+  #wardrobe-mirror { position: relative; height: 230px; border: 2px solid var(--gold-line); border-radius: 14px; overflow: hidden; background: #cfe9f5; flex: none; }
+  #wardrobe-canvas { cursor: grab; } #wardrobe-canvas:active { cursor: grabbing; }
+  #wardrobe-hint { position: absolute; left: 10px; bottom: 10px; font-size: 11px; font-weight: 700; color: #8a7c62; background: rgba(253,246,229,.85); border-radius: 8px; padding: 3px 8px; pointer-events: none; }
+  #wardrobe-whole { position: absolute; right: 8px; top: 8px; font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--navy); cursor: pointer; background: rgba(253,246,229,.92); border: 2px solid var(--gold-line); border-radius: 10px; padding: 4px 9px; }
+  #wardrobe-pose { position: absolute; right: 8px; bottom: 8px; font-family: inherit; font-size: 11.5px; font-weight: 700; color: var(--navy); cursor: pointer; background: rgba(253,246,229,.92); border: 2px solid var(--gold-line); border-radius: 10px; padding: 4px 9px; }
+  #wardrobe-canvas { display: block; width: 100%; height: 100%; }
+  .wardrobe-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  /* the grid is the ONLY part that shrinks and scrolls (min-height: 0 lets flexbox shrink it —
+     without it the panel overflowed the phone-landscape viewport with no scrollbar, Poki review point 4) */
+  #wardrobe-rows { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; flex: 1 1 auto; min-height: 0; padding-top: 5px; scrollbar-width: thin; scrollbar-color: #e8a51f #f7f3e8; padding-right: 2px; }
+  #wardrobe-rows::-webkit-scrollbar { width: 8px; } #wardrobe-rows::-webkit-scrollbar-track { background: #f7f3e8; border-radius: 8px; } #wardrobe-rows::-webkit-scrollbar-thumb { background: #e8a51f; border-radius: 8px; }
+  #wardrobe-tabs, #wardrobe-head, #wardrobe-close { flex: none; }
+  #wardrobe-tabs { display: flex; flex-wrap: wrap; gap: 5px; }
+  .wardrobe-tab {
+    display: flex; flex-direction: column; align-items: center; gap: 1px; font-family: inherit; font-size: 12px; font-weight: 700; color: var(--navy); cursor: pointer;
+    background: var(--cream); border: 2px solid var(--gold-line); border-radius: 10px; padding: 5px 9px; line-height: 1.1;
+  }
+  .wardrobe-tab small { font-size: 10px; color: #8a7c62; font-weight: 700; }
+  .wardrobe-tab.on { color: #fff; background: linear-gradient(#ffd34e, var(--taxi-dark)); border-color: #a86f06; text-shadow: 0 1px 0 rgba(0,0,0,0.25); }
+  .wardrobe-tab.on small { color: #fff5d6; }
+  .wardrobe-slot { font-size: 12px; font-weight: 800; color: #8a7c62; text-transform: uppercase; letter-spacing: .5px; margin-top: 6px; }
+  .wardrobe-item {
+    display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; min-width: 0;
+    font-family: inherit; font-size: 12px; font-weight: 700; color: var(--navy); cursor: pointer;
+    background: #fff; border: 2px solid var(--gold-line); border-radius: 12px; padding: 8px 6px 6px; transition: transform .12s;
+  }
+  .wardrobe-item .ic { font-size: 24px; line-height: 1; }
+  .wardrobe-item .ic3d { width: 56px; height: 56px; display: block; margin: -4px 0; } .wardrobe-item .nm { line-height: 1.1; } .wardrobe-item .state { font-size: 11px; color: #8a7c62; }
+  .wardrobe-item.on { background: #EEF9EA; border-color: #3EAE3E; } .wardrobe-item.on .state { color: #2C822C; }
+  .wardrobe-item.owned { border-style: dashed; background: #fffdf7; } .wardrobe-item.owned .state { color: var(--navy); }
+  .wardrobe-item.owned:hover, .wardrobe-item.can:hover { transform: translateY(-2px); }
+  .wardrobe-item.can { border-color: #ffd34e; background: #fff8e0; } .wardrobe-item.can .state { color: #a86f06; }
+  .wardrobe-item.mystery { background: #f7f3e8; border-color: #E6E1D3; color: #8a7c62; }
+  /* the shop (2026-10-05): unowned items on show — price chip green when affordable, grey when not; the picked one rings gold */
+  .wardrobe-item.shop { background: #fff; border-style: solid; }
+  .wardrobe-item.shop:hover, .wardrobe-item.mystery:hover { transform: translateY(-2px); }
+  .wardrobe-item .price { font-size: 11px; font-weight: 800; border-radius: 999px; padding: 1px 7px; margin-top: 1px; }
+  .wardrobe-item.can .price { color: #fff; background: #3EAE3E; }
+  .wardrobe-item.cant .price { color: #8a7c62; background: #ece6d6; }
+  .wardrobe-item.can { border-color: var(--gold-line); background: #fff; }
+  .wardrobe-item.sel { outline: 3px solid #f2b632; outline-offset: 1px; transform: translateY(-2px); box-shadow: 0 4px 10px rgba(168,111,6,.35); }
+  #wardrobe-buy { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; box-sizing: border-box;
+    border-radius: 12px; padding: 6px 8px 6px 12px; font-size: 13px; font-weight: 700; color: var(--navy); background: #fff; border: 2px solid var(--gold-line); }
+  #wardrobe-buy.idle { justify-content: center; color: #8a7c62; background: #fbf6ea; border-style: dashed; }
+  #wardrobe-buy.done { background: #EEF9EA; border-color: #3EAE3E; color: #2C822C; }
+  #wardrobe-buy .what { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
+  #wardrobe-buy .what small { font-size: 11px; font-weight: 600; color: #8a7c62; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #wardrobe-buybtn { flex: none; font-family: inherit; font-size: 14px; font-weight: 800; color: #fff; cursor: pointer;
+    background: linear-gradient(#6ec95a, #3e8c1d); border: 2px solid #2f6b16; border-radius: 11px; padding: 7px 16px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.25); transition: transform .12s; }
+  #wardrobe-buybtn:hover:not(:disabled) { transform: translateY(-2px); }
+  #wardrobe-buy .pair { display: flex; gap: 6px; flex: none; }
+  #wardrobe-freebtn { flex: none; font-family: inherit; font-size: 13px; font-weight: 800; color: #fff; cursor: pointer;
+    background: linear-gradient(#7c8ff5, #4a5bd6); border: 2px solid #2f3ea6; border-radius: 11px; padding: 7px 12px; text-shadow: 0 1px 0 rgba(0,0,0,0.25); }
+  #wardrobe-freebtn:disabled { opacity: .6; cursor: default; }
+  #wardrobe-buybtn:disabled { cursor: default; color: #8a7c62; text-shadow: none; background: #ece6d6; border-color: #d8cfb8; }
+  .wardrobe-item.mystery .ic { font-size: 26px; font-weight: 800; color: #b9ae9a; }
+  .wardrobe-item.mystery .nm { text-transform: capitalize; }
+  .r-uncommon.mystery { border-color: #9cb8d8; background: #eef4fb; } .r-uncommon.mystery .ic { color: #6f8fb8; }
+  .r-rare.mystery { border-color: #c39be0; background: #f4ecfb; } .r-rare.mystery .ic { color: #8b5cb8; }
+  .r-legendary.mystery { border-color: #e8a51f; background: linear-gradient(#fff8e0, #ffe7a8); } .r-legendary.mystery .ic { color: #d4880c; }
+  .wardrobe-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .wardrobe-empty { font-size: 13.5px; font-weight: 600; color: #8a7c62; text-align: center; padding: 10px; }
+  #wardrobe-close {
+    font-family: inherit; font-size: 14px; font-weight: 700; color: #fff; cursor: pointer;
+    background: linear-gradient(#9aa8b8, #64788c); border: 2px solid rgba(0,0,0,0.25); border-radius: 12px; padding: 9px 22px; align-self: center;
+  }
+  #shift-links { display: flex; gap: 8px; }
+  #shift-wardrobe { font-family: inherit; font-size: 12.5px; font-weight: 700; color: var(--navy); cursor: pointer; background: #fff; border: 2px solid var(--gold-line); border-radius: 11px; padding: 7px 16px; }
+  #pause-wardrobe { color: var(--navy); background: #fff; border: 2px solid var(--gold-line); }
+  #shift-book {
+    font-family: inherit; font-size: 12.5px; font-weight: 700; color: var(--navy); cursor: pointer;
+    background: #fff; border: 2px solid var(--gold-line); border-radius: 11px; padding: 7px 16px;
+  }
+  #book {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(23, 54, 77, 0.6); z-index: 14; /* above #pause too */
+  }
+  #book-panel {
+    display: flex; flex-direction: column; gap: 12px; max-height: 82vh;
+    background: linear-gradient(#fff8e8, var(--cream)); border: 3px solid var(--gold-line);
+    border-radius: 22px; padding: 22px 26px; min-width: 340px;
+    box-shadow: 0 10px 26px rgba(10,25,45,0.45);
+  }
+  #book-panel h3 { margin: 0; font-size: 19px; color: var(--navy); }
+  #book-rows { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  .book-row {
+    display: grid; grid-template-columns: 34px 1fr auto; gap: 4px 10px; align-items: center;
+    background: #fff; border: 2px solid var(--gold-line); border-radius: 13px; padding: 8px 12px;
+  }
+  .book-row .face { font-size: 24px; grid-row: span 2; }
+  .book-row b { font-size: 14px; color: var(--navy); }
+  .book-row b i { font-style: normal; font-size: 10.5px; font-weight: 700; color: #a86f06; margin-left: 6px; }
+  .book-row .stars { font-size: 11.5px; color: #a86f06; font-weight: 700; }
+  .book-row .hearts { grid-column: 2 / 4; font-size: 11px; font-weight: 600; color: #8a7c62; }
+  .book-row.unmet { opacity: 0.5; filter: saturate(0.4); }
+  #book-panel.swing { animation: bookswing 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+  .book-row.hot {
+    border-color: #ffd34e; border-width: 3px;
+    background: linear-gradient(#fffbe8, #ffedb0);
+    box-shadow: 0 0 14px rgba(255, 211, 78, 0.7);
+    animation: rowspot 0.6s 0.3s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+  }
+  @keyframes bookswing {
+    from { opacity: 0; transform: perspective(700px) rotateY(-26deg) translateY(18px) scale(0.9); }
+    to { opacity: 1; transform: perspective(700px) rotateY(0) translateY(0) scale(1); }
+  }
+  @keyframes rowspot {
+    from { opacity: 0; transform: scale(0.85); }
+    60% { transform: scale(1.05); }
+    to { opacity: 1; transform: scale(1); }
+  }
+  #book-close {
+    font-family: inherit; font-size: 14px; font-weight: 700; color: #fff; cursor: pointer;
+    background: linear-gradient(#9aa8b8, #64788c); border: 2px solid rgba(0,0,0,0.25);
+    border-radius: 12px; padding: 9px 22px; align-self: center;
+  }
+  #status {
+    display: inline-block; max-width: 340px;
+    color: var(--navy); font-size: 15.5px; font-weight: 700; line-height: 1.35;
+    background: linear-gradient(#fff8e8, var(--cream)); border: 2px solid var(--gold-line);
+    padding: 8px 16px; border-radius: 16px; box-shadow: 0 3px 8px rgba(20,40,70,0.25);
+    user-select: none; pointer-events: none;
+  }
+  #status:empty { display: none; }
+  #shiftline {
+    display: block; width: max-content; margin-top: 6px; font-size: 14.5px; font-weight: 700; color: var(--navy);
+    background: var(--cream); border: 2px solid var(--gold-line); border-radius: 12px; padding: 4px 12px;
+    box-shadow: 0 2px 6px rgba(20,40,70,0.2); user-select: none; pointer-events: none;
+  }
+  #shiftline:empty { display: none; }
+  #egg {
+    position: fixed; left: 14px; bottom: 84px; z-index: 4; display: flex; align-items: center; gap: 10px; pointer-events: auto; cursor: pointer; overflow: visible; padding-left: 52px !important;
+    font-family: inherit; font-size: 13.5px; font-weight: 700; color: var(--navy); text-align: left;
+    background: var(--cream); border: 2px solid var(--gold-line); border-radius: 14px; padding: 5px 12px 5px 6px;
+    box-shadow: 0 3px 8px rgba(20,40,70,0.25);
+  }
+  #egg:hover { background: #fff; }
+  /* the parcel is BIG and hangs over the pill's edges, like it was plonked on top */
+  #egg-art { position: absolute; left: -14px; bottom: -6px; display: block; width: 68px; height: 68px; transform-origin: 50% 85%; filter: drop-shadow(0 4px 4px rgba(20,40,70,.35)); }
+  #egg-art svg { width: 100%; height: 100%; display: block; }
+  #egg.shake #egg-art { animation: eggshake .7s ease-in-out; }
+  #egg-art { animation: parcelidle 5s ease-in-out infinite; }
+  @keyframes parcelidle { 0%, 88%, 100% { transform: rotate(0); } 90% { transform: rotate(-5deg); } 92% { transform: rotate(5deg); } 94% { transform: rotate(-4deg); } 96% { transform: rotate(3deg); } }
+  @keyframes eggshake { 0%,100% { transform: rotate(0); } 15% { transform: rotate(-18deg) translateY(-5px) scale(1.06); } 30% { transform: rotate(15deg) translateY(-2px); } 45% { transform: rotate(-12deg) translateY(-4px); } 60% { transform: rotate(9deg); } 75% { transform: rotate(-5deg) translateY(-1px); } }
+  #egg-label { display: flex; flex-direction: column; line-height: 1.15; }
+  #egg-label small { font-size: 11px; font-weight: 600; color: #8a7c62; }
+
+  #tutor {
+    position: fixed; left: 50%; top: 16%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px;
+    color: var(--navy); font-size: 19px; font-weight: 700; text-align: center; max-width: 560px;
+    background: linear-gradient(#fff8e8, var(--cream)); border: 3px solid var(--gold-line); border-radius: 18px;
+    padding: 12px 20px; box-shadow: 0 6px 16px rgba(20,40,70,0.3); user-select: none; z-index: 4;
+  }
+  #tutor.tick { border-color: #3e8c1d; background: #eef9ea; animation: tutortick .4s; }
+  @keyframes tutortick { 40% { transform: translateX(-50%) scale(1.08); } }
+  #tutor-skip {
+    font-family: inherit; font-size: 11px; font-weight: 600; color: #8a7c62; cursor: pointer;
+    background: none; border: 1.5px solid var(--gold-line); border-radius: 8px; padding: 3px 8px;
+  }
+  #pop {
+    position: fixed; left: 50%; top: 34%; transform: translate(-50%, -50%);
+    color: #fff; font-weight: 700; font-size: 32px;
+    text-shadow: 0 3px 0 rgba(29,53,87,0.8), 0 6px 12px rgba(0,0,0,0.35), 0 0 18px rgba(247,184,29,0.5);
+    opacity: 0; pointer-events: none; transition: opacity 0.25s, top 0.9s;
+  }
+  #wrongway { /* a small pill in the lower third — never over the goose (Poki review 2026-10-05) */
+    position: fixed; left: 50%; top: 82%; transform: translate(-50%, -50%); /* clears the wings, above the touch ⏸ */
+    color: var(--navy); font-size: 13.5px; font-weight: 700; white-space: nowrap;
+    background: linear-gradient(#fff8e8, var(--cream)); border: 2px solid var(--gold-line);
+    padding: 5px 14px; border-radius: 13px; box-shadow: 0 3px 8px rgba(20,40,70,0.25);
+    opacity: 0; pointer-events: none; transition: opacity 0.5s; user-select: none;
+  }
+  #therm {
+    position: fixed; left: 50%; bottom: 12%; transform: translateX(-50%);
+    color: #fff; font-weight: 700; font-size: 18px; background: linear-gradient(#8fd45a, #57a82e);
+    border: 2px solid #3e8c1d; border-radius: 14px; padding: 4px 14px;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.3);
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+
+  /* ---------- touch controls (shown on coarse pointers) ---------- */
+  #touch { position: fixed; inset: 0; pointer-events: none; z-index: 6; user-select: none; -webkit-user-select: none; }
+  #touch button {
+    pointer-events: auto; touch-action: none; font-family: inherit; font-weight: 800; color: var(--navy); cursor: pointer;
+    background: rgba(253,246,229,.92); border: 3px solid var(--gold-line); border-radius: 50%; box-shadow: 0 4px 10px rgba(20,40,70,.3);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1;
+  }
+  #touch button:active { background: #ffd34e; transform: scale(.94); }
+  #touch button span { font-size: 10px; letter-spacing: .5px; }
+  #touch-stick { position: absolute; left: -34px; top: -34px; width: 68px; height: 68px; border-radius: 50%; border: 2px solid rgba(255,255,255,.55); background: rgba(0,0,0,.12); will-change: transform; }
+  #touch-stick i { position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: rgba(255,211,78,.85); box-shadow: 0 1px 4px rgba(0,0,0,.25); will-change: transform; }
+  #premise { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; pointer-events: none; z-index: 8; text-align: center; color: #fff; text-shadow: 0 2px 6px rgba(0,0,0,.45); opacity: 0; transition: opacity .35s; padding: 0 6vw; }
+  #premise.show { opacity: 1; }
+  #premise b { font-size: clamp(22px, 4.2vw, 40px); font-weight: 800; letter-spacing: .5px; color: #ffd34e; }
+  #premise span { font-size: clamp(14px, 2.2vw, 20px); font-weight: 700; }
+  #touch-pause { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); width: 46px; height: 40px; font-size: 18px; border-radius: 12px; }
+  #touch-right { position: absolute; right: 16px; bottom: 18px; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+  #touch-flap { width: 96px; height: 96px; font-size: 34px; }
+  #touch-brake { width: 68px; height: 68px; font-size: 24px; margin-right: 22px; }
+  #touch-honk { width: 60px; height: 60px; font-size: 22px; margin-right: 6px; }
+
+  /* ---------- phones: everything fits both orientations ---------- */
+  @media (max-width: 900px), (max-height: 520px) {
+    html, body { font-size: 14px; }
+    #hud { left: 8px; top: 8px; max-width: 46vw; }
+    #status { font-size: 12.5px; padding: 6px 10px; max-width: 46vw; }
+    #shiftline { font-size: 12px; padding: 3px 9px; }
+    #egg { left: 8px; bottom: 66px; font-size: 12px; padding: 4px 9px 4px 44px !important; } #egg-art { width: 52px; height: 52px; left: -10px; }
+    #stats { right: 8px; top: 8px; font-size: 12.5px; padding: 6px 10px; line-height: 1.35; }
+    #stats b { font-size: 18px; }
+    #happy { top: 104px; right: 8px; transform: scale(.85); transform-origin: top right; }
+    #vane { left: 8px; bottom: 10px; padding: 4px 9px 4px 6px; font-size: 11.5px; }
+    #vane svg { width: 36px; height: 36px; }
+    #vane b { font-size: 13px; } #vane span { font-size: 11px; }
+    #tutor { top: 12%; max-width: 88vw; font-size: 15px; padding: 9px 12px; }
+    #pop { font-size: 24px; }
+    /* centred on BOTH axes (Poki review 2026-10-09, point 6: "a bit off-center" in portrait —
+       align-items is the HORIZONTAL axis of this column, flex-start pinned it all left). Vertical
+       centring by auto margins, not justify-content, so a tall hand still scrolls from its top */
+    #farehand { gap: 10px; padding: 8px; overflow-y: auto; align-items: center; justify-content: flex-start; }
+    #farehand > :first-child { margin-top: auto; } #farehand > :last-child { margin-bottom: auto; }
+    #farehand h2 { max-width: 96vw; box-sizing: border-box; text-align: center; }
+    #farehand h2 { font-size: 16px; padding: 8px 14px; }
+    #farehand-cards { gap: 10px; }
+    .fare-card { width: min(232px, 44vw); }
+    .fare-card b { font-size: 16px; padding: 6px 6px 0; }
+    .fare-art { font-size: 38px; }
+    .fare-card span { font-size: 12.5px; padding: 6px 8px; }
+    .fare-tags em { font-size: 10.5px; padding: 2px 6px; }
+    #farehand-actions button { font-size: 12.5px; padding: 8px 14px; }
+    #wardrobe-mirror { height: min(230px, 28vh); }
+    #shift-panel, #pause-panel, #book-panel, #review-panel { padding: 14px 16px; min-width: 0; width: min(94vw, 420px); max-height: 92vh; overflow-y: auto; box-sizing: border-box; }
+    #pause-footer { margin: 6px -16px -14px; padding: 10px 16px 12px; } /* the footer bleeds to the panel edge: its margins match THIS padding */
+    #wardrobe-panel { padding: 12px 14px; gap: 8px; max-height: 94vh; }
+    #wardrobe-panel h3 { font-size: 16px; }
+    #shift-coins { font-size: 30px; }
+  }
+  /* portrait phones: cards in a 2-wide grid, panels use the full width */
+  @media (max-width: 600px) and (orientation: portrait) {
+    #farehand-cards { display: grid; grid-template-columns: 1fr 1fr; width: 96vw; }
+    .fare-card { width: auto; }
+    /* an odd last card sits centred under the pair, the same width as its siblings */
+    .fare-card:last-child:nth-child(odd) { grid-column: 1 / -1; justify-self: center; width: calc((96vw - 10px) / 2); }
+    #touch-right { bottom: 14px; }
+    #touch-flap { width: 84px; height: 84px; }
+    #happy { display: none !important; }
+  }
+  /* landscape phones: short — shrink the vertical stuff */
+  @media (max-height: 460px) and (orientation: landscape) {
+    #tutor { top: 8%; font-size: 13.5px; }
+    /* the wardrobe on a phone held sideways: a short mirror, one row of small tabs, the grid scrolls */
+    #wardrobe-panel { padding: 8px 12px; gap: 6px; width: min(96vw, 640px); max-height: 96vh; }
+    #wardrobe-mirror { height: min(230px, 24vh); }
+    #wardrobe-buy { min-height: 32px; padding: 3px 5px 3px 10px; font-size: 12px; }
+    #wardrobe-buybtn { padding: 4px 12px; font-size: 12.5px; }
+    #wardrobe-hint { display: none; }
+    .wardrobe-tab { font-size: 11px; padding: 3px 8px; } .wardrobe-tab small { font-size: 9px; }
+    .wardrobe-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .wardrobe-item .ic3d { width: 40px; height: 40px; }
+    #wardrobe-close { padding: 6px 18px; font-size: 13px; }
+    #farehand { align-items: center; }
+    .fare-card { width: min(200px, 30vw); }
+    .fare-card span { display: none; }
+    #touch-flap { width: 72px; height: 72px; font-size: 28px; }
+    #touch-brake { width: 56px; height: 56px; }
+    #touch-honk { width: 50px; height: 50px; }
+  }
+
+  /* ---------- every screen FITS — no scrolling (Paul 2026-10-05: "in the Poki screen I
+     wouldn't think to scroll here"). Checked at the Inspector's ~784×434, 844×390, 640×360,
+     1100×600 and 500×1000 (fit.mjs in the session scratchpad). The Client Book list is the
+     one scroller left: it's a long list by nature. ---------- */
+  #shift-panel, #review-panel { max-height: 96vh; box-sizing: border-box; overflow-y: auto; } /* a last resort, never the plan */
+  /* the lean summary (2026-10-05): the big rewarded offer and Collect share one width; the coin
+     streak price is a quiet text link under the ad offer; the Shop link carries a count badge */
+  #shift-panel { width: min(94vw, 380px); min-width: 0; gap: 10px; }
+  #shift-savefree, #shift-double, #shift-collect { width: 100%; max-width: 320px; box-sizing: border-box; }
+  #shift-savefree, #shift-double { font-size: 16px; padding: 12px 18px; }
+  #shift-savestreak.link { background: none; border: none; box-shadow: none; text-shadow: none; color: #8a7c62; font-size: 13px; font-weight: 700; padding: 0; margin-top: -4px; text-decoration: underline; }
+  #shift-sub { margin-top: -6px; text-align: center; }
+  #shift-wardrobe .badge { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 999px; background: #e8467b; color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+  @media (max-height: 520px) {
+    #shift-panel { padding: 10px 18px; gap: 6px; }
+    #shift-title { font-size: 16px; } #shift-coins { font-size: 28px; } #shift-sub { font-size: 11.5px; margin-top: -3px; }
+    #shift-gift { padding: 5px 12px; gap: 10px; border-width: 2px; } #shift-gift .parcel { font-size: 28px; } #shift-gift .ic3d { width: 44px; height: 44px; }
+    #shift-gift b { font-size: 14px; } #shift-gift span, #shift-gift em { font-size: 11.5px; }
+    #shift-savefree, #shift-double { font-size: 14px; padding: 8px 14px; }
+    #shift-collect { font-size: 15px; padding: 8px 24px; margin-top: 0; }
+    #shift-book, #shift-wardrobe { padding: 4px 12px; font-size: 11.5px; }
+  }
+  /* short screens: the rating card and the pause compact (one column still — it reads top-down) */
+  @media (max-height: 520px) {
+    #review-panel { padding: 10px 20px; gap: 6px; }
+    #review-panel h3 { font-size: 13.5px; }
+    #review-card { gap: 3px; }
+    .rev-face { font-size: 30px; line-height: 1; } .rev-name { font-size: 16px; } .rev-stars { font-size: 20px; letter-spacing: 2px; }
+    .rev-quote { font-size: 12.5px; } .rev-pref { font-size: 11px; padding: 2px 10px; }
+    .rev-hearts { font-size: 15px; min-height: 18px; } .rev-noheart { font-size: 11px; }
+    .rev-book { font-size: 12px; } .rev-book.big { padding: 3px 10px; }
+    .rev-pay { font-size: 16px; }
+    #review-actions { gap: 8px; }
+    #review-double, #review-continue { font-size: 13px; padding: 7px 16px; }
+    #pause-panel { padding: 12px 18px; gap: 7px; max-height: 96vh; }
+    #pause-panel h3 { font-size: 16px; margin: 0; }
+    #pause-settings, #pause-controls { gap: 6px; }
+    #pause-controls .ctl { padding: 4px 10px; font-size: 12px; }
+    #pause-music-row, #pause-vol-row, #pause-gfx-row { padding: 5px 10px; }
+    #pause-panel button { padding: 6px 14px; }
+    #pause-footer { margin: 2px -18px -12px; padding: 8px 18px 10px; }
+  }
+  /* the wardrobe shop on a SHORT LANDSCAPE screen (phone sideways, the Inspector): two columns —
+     mirror + buy bar | tabs + items + Back. Stacked, the buy bar squeezed the item grid to 37px
+     at 844×390. */
+  @media (orientation: landscape) {
+    #wardrobe-panel { display: grid; width: min(96vw, 880px); height: min(94vh, 640px); max-height: 94vh; column-gap: 14px; row-gap: 8px;
+      grid-template-columns: minmax(0, 42fr) minmax(0, 58fr); grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-areas: "head tabs" "mirror rows" "buy close"; }
+    #wardrobe-head { grid-area: head; } #wardrobe-tabs { grid-area: tabs; align-self: start; }
+    #wardrobe-mirror { grid-area: mirror; height: auto; min-height: 0; }
+    #wardrobe-buy { grid-area: buy; }
+    #wardrobe-rows { grid-area: rows; min-height: 0; }
+    #wardrobe-close { grid-area: close; justify-self: end; align-self: center; }
+  }
+  @media (orientation: landscape) and (max-height: 520px) {
+    #wardrobe-panel { width: min(96vw, 780px); height: 94vh; padding: 8px 12px; column-gap: 12px; row-gap: 6px; }
+    #wardrobe-panel h3 { font-size: 15px; }
+    .wardrobe-tab { font-size: 10.5px; padding: 3px 6px; } .wardrobe-tab small { display: none; }
+    .wardrobe-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+    .wardrobe-item { padding: 5px 4px 4px; font-size: 11px; }
+    #wardrobe-buy .what small { display: none; }
+  }
+  /* ---------- rewarded = the SAME SIZE as the regular button beside it (Poki review 2026-10-09,
+     point 5: "the ad button and regular button are the same size, and a clapper icon rather than
+     the tv"). Every ad button carries 🎬. Pairs: summary offer ↔ Collect (one width, one height),
+     rating card Double ↔ Next fare (equal flex halves, stretched to one height), wardrobe Free ↔
+     Buy (equal grid columns). Last in the sheet so it beats the per-screen rules above. ---------- */
+  #shift-savefree, #shift-double, #shift-collect { font-size: 16px; font-weight: 700; padding: 12px 18px; min-height: 50px; margin-top: 2px; border-radius: 14px; }
+  #review-actions { flex-wrap: nowrap; align-items: stretch; width: 100%; min-width: min(380px, 84vw); justify-content: center; }
+  #review-double, #review-continue { flex: 1 1 0; min-width: 0; max-width: 210px; font-size: 15px; font-weight: 700; padding: 10px 14px; min-height: 48px; border-radius: 13px; line-height: 1.2; }
+  #wardrobe-buy .pair { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+  #wardrobe-buy.two { flex-wrap: wrap; row-gap: 4px; }
+  #wardrobe-buy.two .what { flex: 1 1 100%; flex-direction: row; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; }
+  #wardrobe-buy.two .what b { overflow: hidden; text-overflow: ellipsis; }
+  #wardrobe-buy.two .pair { flex: 1 1 100%; }
+  #wardrobe-buybtn, #wardrobe-freebtn { font-size: 14px; font-weight: 800; padding: 7px 14px; min-height: 36px; border-radius: 11px; }
+  @media (max-height: 520px) {
+    #shift-savefree, #shift-double, #shift-collect { font-size: 14px; padding: 8px 14px; min-height: 40px; margin-top: 0; }
+    #review-double, #review-continue { font-size: 13px; padding: 6px 12px; min-height: 38px; }
+  }
+  @media (max-height: 460px) and (orientation: landscape) {
+    #wardrobe-buybtn, #wardrobe-freebtn { padding: 4px 10px; font-size: 12.5px; min-height: 30px; }
+  }
+</style>
+  <script type="module" crossorigin src="./assets/index-BIFcaFQ4.js"></script>
+</head>
+<body>
+<div id="hud">
+  <div id="status"></div>
+  <div id="shiftline"></div>
+  <div id="rating" title="Your taxi rating"></div>
+</div>
+<div id="stats">🪙 <b id="coins">0</b> <b id="combo"></b><br>📦 <b id="deliv">0</b> delivered<br><span id="speed"></span></div>
+<button id="egg" style="display:none" aria-label="Your parcel"><span id="egg-art"></span><span id="egg-label"></span></button>
+<div id="vane" style="display:none">
+  <svg viewBox="-20 -20 40 40" width="46" height="46" aria-label="wind">
+    <circle r="18" fill="#fff" stroke="#e8a51f" stroke-width="2"/>
+    <path d="M0 -18 l-2.2 4 h4.4 z" fill="#1d3557"/>
+    <g id="vane-arrow" style="transform-origin:0 0; transform:rotate(0deg) scaleY(.35)">
+      <path d="M0 13 L0 -11" stroke="#d4880c" stroke-width="3.2" stroke-linecap="round"/>
+      <path d="M0 -14 l-5 6 h10 z" fill="#d4880c"/>
+    </g>
+  </svg>
+  <div><b id="vane-band">calm</b><span id="vane-outlook"></span></div>
+</div>
+<div id="flash"></div>
+<div id="touch" style="display:none">
+  <div id="touch-stick" hidden><i></i></div>
+  <button id="touch-pause" aria-label="Pause" data-menu-key>⏸</button>
+  <div id="touch-right">
+    <button id="touch-honk" aria-label="Honk">📢<span>HONK</span></button>
+    <button id="touch-brake" aria-label="Brake (hold)">🪂<span>BRAKE</span></button>
+    <button id="touch-flap" aria-label="Flap (hold)">🪽<span>FLAP</span></button>
+  </div>
+</div>
+<div id="happy"></div>
+<div id="review">
+  <div id="review-panel">
+    <h3>Your passenger rates the ride…</h3>
+    <div id="review-card"></div>
+    <div id="review-actions"><button id="review-double" style="display:none"></button><button id="review-continue">Next fare ➜</button></div>
+  </div>
+</div>
+<div id="pause">
+  <div id="pause-panel">
+    <h3>⏸️ Paused</h3>
+    <div id="pause-tabs"><button data-tab="settings" class="on">⚙️ Settings</button><button data-tab="controls">🎮 Controls</button></div>
+    <div id="pause-controls" style="display:none">
+      <button id="invert-toggle"></button>
+      <button id="mouselock-toggle"></button>
+      <div class="ctl">🖱️ Goose chases your cursor</div>
+      <div class="ctl">🪽 Hold click or Space to flap</div>
+      <div class="ctl">⬇️💨 Dive for speed &middot; ⬆️ climb to spend it</div>
+      <div class="ctl">🪂 Shift (or ⬅️+➡️ together) brakes &amp; lands</div>
+      <div class="ctl">⌨️ WASD / arrows steer &middot; 📢 H honks</div>
+      <div class="ctl">⏸️ Esc pauses</div>
+      <div class="ctl">🎮 Gamepad: stick steers &middot; A / RT flaps &middot; B / LT brakes &middot; X honks &middot; Start pauses</div>
+    </div>
+    <div id="pause-settings">
+    <label id="pause-vol-row">🔊 Sound <input type="range" id="pause-volume" min="0" max="100" step="5"><span id="pause-vol-val"></span></label>
+    <div id="pause-gfx-note" style="display:none; font-size: 12px; color: #8a7c62; text-align: center;">Smoothing change applies on next launch</div>
+    <label id="pause-music-row">🎵 Music <input type="range" id="pause-music" min="0" max="100" step="5"><span id="pause-music-val"></span></label>
+    <div id="pause-gfx-row">🎨 Graphics
+      <button data-gfx="low">Low</button><button data-gfx="med">Med</button><button data-gfx="high">High</button>
+    </div>
+    </div>
+    <div id="pause-footer">
+      <button id="pause-book">📖 Client Book</button>
+      <button id="pause-wardrobe">👒 Wardrobe</button>
+      <a id="pause-privacy" href="privacy.html" target="_blank" rel="noopener" title="Privacy policy">🔒</a>
+      <button id="pause-resume">▶ Resume</button>
+    </div>
+  </div>
+</div>
+<div id="bonk"></div>
+<div id="speedfx"></div>
+<div id="vignette"></div>
+<div id="lens"><i style="left:7%;animation-duration:1.9s"></i><i style="left:19%;animation-duration:1.4s;animation-delay:.4s;height:6%"></i><i style="left:33%;animation-duration:2.3s;animation-delay:.9s"></i><i style="left:46%;animation-duration:1.6s;animation-delay:.2s;height:7%"></i><i style="left:58%;animation-duration:2.1s;animation-delay:1.1s"></i><i style="left:71%;animation-duration:1.5s;animation-delay:.6s;height:5%"></i><i style="left:84%;animation-duration:1.8s;animation-delay:.3s"></i><i style="left:93%;animation-duration:2.4s;animation-delay:1.4s;height:8%"></i></div>
+<div id="mist"></div>
+<div id="edge-marker"><span>&#10148;</span></div>
+<div class="bubble" id="bubble0"></div>
+<div class="bubble" id="bubble1"></div>
+<div class="bubble" id="bubble2"></div>
+<div id="therm">updraft!</div>
+<div id="wrongway">↩️ Your fare is the other way</div>
+<div id="premise" aria-hidden="true"><b>🪿 GOOSE TAXI</b><span>You're a goose. You run a taxi. Your passengers have opinions.</span></div>
+<div id="tutor" style="display:none"><span id="tutor-text"></span><button id="tutor-skip">skip</button></div>
+<div id="pop"></div>
+<div id="farehand">
+  <h2 id="farehand-title">📻 Calls coming in — choose your fare:</h2>
+  <div id="farehand-cards"></div>
+  <div id="farehand-actions">
+    <button id="farehand-reroll"></button>
+    <button id="farehand-callback" style="display:none"></button>
+    <button id="farehand-skip" style="display:none"></button>
+  </div>
+</div>
+<div id="shift">
+  <div id="shift-panel">
+    <!-- LEAN (Paul 2026-10-05): the pay, one stats line, the parcel, ONE rewarded offer,
+         Collect, two small links. The market lives in the wardrobe shop. -->
+    <h3 id="shift-title"></h3>
+    <div id="shift-coins"><span id="shift-earned"></span><span id="shift-purse-wrap"><b>earned</b><span id="shift-purse"></span></span></div>
+    <div id="shift-sub"></div>
+    <div id="shift-gift" style="display:none"></div>
+    <button id="shift-savefree" style="display:none"></button>
+    <button id="shift-savestreak" style="display:none"></button>
+    <button id="shift-double" style="display:none"></button>
+    <button id="shift-collect"></button>
+    <div id="shift-links"><button id="shift-book">📖 Book</button><button id="shift-wardrobe">👒 Shop</button></div>
+  </div>
+</div>
+<div id="wardrobe">
+  <div id="wardrobe-panel">
+    <div id="wardrobe-head"><h3>👒 The Wardrobe</h3><span id="wardrobe-coins"></span></div>
+    <div id="wardrobe-mirror"><canvas id="wardrobe-canvas"></canvas><button id="wardrobe-pose"></button><button id="wardrobe-whole">🪿 Whole goose</button><span id="wardrobe-hint">tap an item to try it on · drag to spin · pinch to zoom</span></div>
+    <div id="wardrobe-buy" class="idle">A shop: tap any item to try it on, then buy it</div>
+    <div id="wardrobe-tabs"></div>
+    <div id="wardrobe-rows"></div>
+    <button id="wardrobe-close">Back</button>
+  </div>
+</div>
+<div id="book">
+  <div id="book-panel">
+    <h3>📖 The Client Book</h3>
+    <div id="book-rows"></div>
+    <button id="book-close">Back</button>
+  </div>
+</div>
+</body>
+</html>

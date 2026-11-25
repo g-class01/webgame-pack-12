@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <script>
+(function() {
+  window.open = function () {}; window.NOSW = true;
+  var origImgSrc = Object.getOwnPropertyDescriptor(Image.prototype, 'src');
+  if (origImgSrc && origImgSrc.set) {
+    var rawSet = origImgSrc.set;
+    origImgSrc.set = function(url) {
+      var elem = this;
+      var retries = 0;
+      elem.addEventListener('error', function onErr() {
+        if (retries < 3) {
+          retries++;
+          setTimeout(function() {
+            var sep = url.indexOf('?') >= 0 ? '&' : '?';
+            rawSet.call(elem, url + sep + '_retry=' + retries);
+          }, 150 * retries);
+        }
+      });
+      return rawSet.call(this, url);
+    };
+    Object.defineProperty(Image.prototype, 'src', origImgSrc);
+  }
+})();
+</script>
+<script src="poki-sdk.js"></script>
+    <meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no' />
+    <meta charset='utf-8'>
+    <link rel="stylesheet" type="text/css" href="styles.css">
+    <link rel="manifest" href="manifest.json">
+    <style></style>
+    <title>Free Kick Shooter Poki</title>
+    
+    <script src="playcanvas-stable.min.js"></script>
+        <script src="ammo.dcab07b.js"></script>
+
+</head>
+<body>
+<div id="rotate">
+
+</div>
+ <script src="__modules__.js"></script>
+ <script src="__settings__.js"></script>
+<script src="__start__.js"></script>
+</body>
+</html>

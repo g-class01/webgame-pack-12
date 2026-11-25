@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+  <script>window.open = function () {}; window.NOSW = true;</script>
+<script src="poki-sdk.js"></script>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b0d10" />
+    <title>Wreckbound</title>
+    <!-- An EMPTY icon, so the browser does not request /favicon.ico. There is none, and
+         the 404 it logged on every standalone/dev load was a console error that the
+         agent tooling and a human both had to learn to ignore. No request is made. -->
+    <link rel="icon" href="data:," />
+    <!-- Poki SDK — deliberately a SYNC script (no async/defer): main.js is a
+         deferred module that reads window.PokiSDK at construction, so the SDK
+         must have executed first (adding async would race it and silently boot
+         the no-SDK fallback). This is the one allowed external request per the
+         Poki new-requirements (their own CDN); if it fails to load (offline /
+         ad blocker) the game still runs via the no-op stub in src/poki/Poki.js. -->
+    
+    <script type="module" crossorigin src="./assets/index-Uk3mVtgZ.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-EaKwxD4n.css">
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>

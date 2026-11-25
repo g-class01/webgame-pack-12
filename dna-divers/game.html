@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script>window.open = function () {}; window.NOSW = true;</script>
+<script src="poki-sdk.js"></script>
+  <meta charset="utf-8">
+
+  <title>DNA Divers: Sea Creatures</title>
+
+  <!--http://www.html5rocks.com/en/mobile/mobifying/-->
+  <meta name="viewport"
+        content="width=device-width,user-scalable=no,initial-scale=1,minimum-scale=1,maximum-scale=1,minimal-ui=true"/>
+
+  <!--https://developer.apple.com/library/safari/documentation/AppleApplications/Reference/SafariHTMLRef/Articles/MetaTags.html-->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="format-detection" content="telephone=no">
+
+  <!-- force webkit on 360 -->
+  <meta name="renderer" content="webkit"/>
+  <meta name="force-rendering" content="webkit"/>
+  <!-- force edge on IE -->
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1"/>
+  <meta name="msapplication-tap-highlight" content="no">
+
+  <!-- force full screen on some browser -->
+  <meta name="full-screen" content="yes"/>
+  <meta name="x5-fullscreen" content="true"/>
+  <meta name="360-fullscreen" content="true"/>
+
+  <!--fix fireball/issues/3568 -->
+  <!--<meta name="browsermode" content="application">-->
+  <meta name="x5-page-mode" content="app">
+
+  <!--<link rel="apple-touch-icon" href=".png" />-->
+  <!--<link rel="apple-touch-icon-precomposed" href=".png" />-->
+
+  <script>
+      // Startup trace. Marks always go to the console: Poki playtests keep it from the first second,
+      // and the engine's log/warn are silent in release builds. ?loadDebug=1 adds the resource and long-task report.
+      (function () {
+          const debug = new URLSearchParams(location.search).get('loadDebug') === '1';
+
+          // The default 250 entries run out before the scene loads; the boot watchdog counts downloads here too.
+          performance.setResourceTimingBufferSize?.(3000);
+          const longTasks = [];
+          let observer = null;
+          if (debug && window.PerformanceObserver) {
+              try {
+                  observer = new PerformanceObserver((list) => {
+                      for (const task of list.getEntries()) {
+                          if (longTasks.length < 500) longTasks.push({ start: task.startTime, duration: task.duration });
+                      }
+                  });
+                  observer.observe({ type: 'longtask', buffered: true });
+              } catch (_) { /* Long Task API is optional. */ }
+          }
+
+          let reportScheduled = false;
+          const trace = window.__loadTrace = {
+              now: () => performance.now(),
+              mark(name, details) {
+                  const extra = details === undefined ? '' : ` ${JSON.stringify(details)}`;
+                  console.info(`[Boot] +${performance.now().toFixed(0)}ms ${name}${extra}`);
+              },
+              span(name, start, details) {
+                  if (typeof start !== 'number') return;
+                  const extra = details === undefined ? '' : ` ${JSON.stringify(details)}`;
+                  const end = performance.now();
+                  console.info(`[Boot] +${end.toFixed(0)}ms ${name}: ${(end - start).toFixed(0)}ms${extra}`);
+              },
+              report() {
+                  if (!debug) return;
+                  observer?.disconnect();
+                  const nav = performance.getEntriesByType('navigation')[0];
+                  if (nav) {
+                      console.info(`[LoadDebug] navigation: response=${nav.responseEnd.toFixed(0)}ms DOM=${nav.domContentLoadedEventEnd.toFixed(0)}ms load=${nav.loadEventEnd.toFixed(0)}ms`);
+                  }
+                  const resources = performance.getEntriesByType('resource');
+                  const transferKB = Math.round(resources.reduce((sum, item) => sum + (item.transferSize || 0), 0) / 1024);
+                  console.info(`[LoadDebug] resources: ${resources.length}, transferred=${transferKB}KB (cache/cross-origin may report 0)`);
+                  const gameResources = resources.filter((item) =>
+                      ['/assets/', '/scene/', '/scripting/', '/engine_external/'].some((part) => item.name.includes(part)));
+                  const bucketMs = 5000;
+                  const buckets = Array.from({ length: Math.ceil(performance.now() / bucketMs) }, () =>
+                      ({ started: 0, finished: 0, longTaskMs: 0 }));
+                  for (const item of gameResources) {
+                      const end = item.responseEnd || item.startTime + item.duration;
+                      const startBucket = Math.floor(item.startTime / bucketMs);
+                      const endBucket = Math.floor(end / bucketMs);
+                      if (buckets[startBucket]) buckets[startBucket].started++;
+                      if (buckets[endBucket]) buckets[endBucket].finished++;
+                  }
+                  for (const task of longTasks) {
+                      const bucket = buckets[Math.floor(task.start / bucketMs)];
+                      if (bucket) bucket.longTaskMs += task.duration;
+                  }
+                  buckets.forEach((bucket, index) => {
+                      console.info(`[LoadDebug] ${index * 5}-${(index + 1) * 5}s: game requests started=${bucket.started} finished=${bucket.finished}, long tasks=${bucket.longTaskMs.toFixed(0)}ms`);
+                  });
+                  console.info(`[LoadDebug] long tasks: count=${longTasks.length}, total=${longTasks.reduce((sum, task) => sum + task.duration, 0).toFixed(0)}ms`);
+                  const label = (item) => item.name.replace(location.origin, '');
+                  for (const item of [...gameResources].sort((a, b) => b.responseEnd - a.responseEnd).slice(0, 8)) {
+                      console.info(`[LoadDebug] last game resource: +${item.responseEnd.toFixed(0)}ms ${item.duration.toFixed(0)}ms ${label(item)}`);
+                  }
+                  for (const item of [...resources].sort((a, b) => b.duration - a.duration).slice(0, 8)) {
+                      console.info(`[LoadDebug] slow resource: +${item.startTime.toFixed(0)}ms ${item.duration.toFixed(0)}ms ${Math.round((item.transferSize || 0) / 1024)}KB ${label(item)}`);
+                  }
+                  for (const item of [...resources].sort((a, b) => (b.decodedBodySize || 0) - (a.decodedBodySize || 0)).slice(0, 5)) {
+                      console.info(`[LoadDebug] large resource: +${item.startTime.toFixed(0)}ms ${Math.round((item.decodedBodySize || 0) / 1024)}KB ${item.duration.toFixed(0)}ms ${label(item)}`);
+                  }
+                  for (const task of [...longTasks].sort((a, b) => b.duration - a.duration).slice(0, 8)) {
+                      console.info(`[LoadDebug] long task: +${task.start.toFixed(0)}ms duration=${task.duration.toFixed(0)}ms`);
+                  }
+              },
+              scheduleReport(delay = 5000) {
+                  if (!debug || reportScheduled) return;
+                  reportScheduled = true;
+                  setTimeout(() => trace.report(), delay);
+              },
+          };
+          trace.mark('HTML head');
+          document.addEventListener('DOMContentLoaded', () => trace.mark('DOM ready'));
+          window.addEventListener('load', () => trace.mark('window load'));
+          if (debug) setTimeout(() => { if (!reportScheduled) trace.report(); }, 30000);
+      })();
+  </script>
+
+  <style>
+html {
+  -ms-touch-action: none;
+}
+
+body, canvas, div {
+  display: block;
+  outline: none;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+
+  user-select: none;
+  -moz-user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  -khtml-user-select: none;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+}
+
+/* Remove spin of input type number */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+    /* display: none; <- Crashes Chrome on hover */
+    -webkit-appearance: none;
+    margin: 0; /* <-- Apparently some margin are still there even though it's hidden */
+}
+
+body {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  margin: 0;
+
+  cursor: default;
+  color: #888;
+  background-color: #333;
+
+  text-align: center;
+  font-family: Helvetica, Verdana, Arial, sans-serif;
+
+  display: flex;
+  flex-direction: column;
+}
+
+canvas {
+  background-color: rgba(0, 0, 0, 0);
+}
+
+#GameDiv, #Cocos3dGameContainer, #GameCanvas {
+  width: 100%;
+  height: 100%;
+}
+
+:root {
+  --safe-top: env(safe-area-inset-top);
+  --safe-right: env(safe-area-inset-right);
+  --safe-bottom: env(safe-area-inset-bottom);
+  --safe-left: env(safe-area-inset-left);
+}
+
+</style>
+
+  <!-- ============ ЗАГРУЗЧИК: качаем только ту картинку, что нужна сейчас ============ -->
+  <link rel="preload" as="image" href="./loading-portrait.webp"  media="(orientation: portrait)" fetchpriority="high">
+  <link rel="preload" as="image" href="./loading-landscape.webp" media="(orientation: landscape)" fetchpriority="high">
+  <!-- Boot preloads go after the loader art, so the art is not queued behind ~10 MB of engine files. -->
+  <link rel="preload" href="src/polyfills.bundle.js" as="script">
+  <link rel="preload" href="src/system.bundle.js" as="script">
+  <link rel="preload" href="index.js" as="script">
+  <link rel="preload" href="application.js" as="script">
+  <link rel="preload" href="cocos-js/cc.js" as="script">
+  <link rel="preload" href="cocos-js/_virtual_cc-KYj4el7e.js" as="script">
+  <link rel="preload" href="cocos-js/meshopt_decoder.wasm-DKe5VOQW.js" as="script">
+  <link rel="preload" href="cocos-js/meshopt_decoder.wasm-Cvy1kpGq.js" as="script">
+  <link rel="preload" href="cocos-js/assets/meshopt_decoder.wasm-Dt74TiIT.wasm" as="fetch" crossorigin="anonymous">
+  <link rel="preload" href="cocos-js/physx.release.wasm-Cry2R9cO.js" as="script">
+  <link rel="preload" href="cocos-js/_commonjsHelpers-C8MkXYRk.js" as="script">
+  <link rel="preload" href="cocos-js/physx.release.wasm-C6LLqpgQ.js" as="script">
+  <link rel="preload" href="cocos-js/assets/physx.release.wasm-D9XFFUV8.wasm" as="fetch" crossorigin="anonymous">
+  <link rel="preload" href="src/settings.json" as="fetch" crossorigin="anonymous">
+  <link rel="preload" href="src/effect.bin" as="fetch" crossorigin="anonymous">
+  <link rel="preload" href="src/chunks/bundle.js" as="script">
+  <link rel="preload" href="assets/internal/config.json" as="fetch" crossorigin="anonymous">
+  <link rel="preload" href="assets/internal/index.js" as="script" crossorigin="anonymous">
+  <link rel="preload" href="assets/internal/import/0b/0b2f6e07e.json" as="fetch" crossorigin="anonymous">
+  <link rel="preload" href="assets/resources/config.json" as="fetch" crossorigin="anonymous">
+  <link rel="preload" href="assets/resources/index.js" as="script" crossorigin="anonymous">
+  <link rel="preload" href="assets/main/config.json" as="fetch" crossorigin="anonymous">
+  <link rel="preload" href="assets/main/index.js" as="script" crossorigin="anonymous">
+  <link rel="preload" href="assets/main/import/0a/0adc5bab0.json" as="fetch" crossorigin="anonymous">
+
+  <style>
+    /* Имена файлов и цвет подложки меняются только здесь.
+       Сами картинки положить рядом с index.ejs, в build-templates/web-mobile/ —
+       при сборке они копируются в корень build/web-mobile/. */
+    :root {
+      --loader-bg:        #051a3c;
+      --loader-portrait:  url('./loading-portrait.webp');
+      --loader-landscape: url('./loading-landscape.webp');
+    }
+
+    #GameLoader {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 9999;
+      background-color: var(--loader-bg);
+      background-image: var(--loader-landscape);
+      background-repeat: no-repeat;
+      background-position: center center;
+      background-size: cover;
+      opacity: 1;
+      transition: opacity .4s ease;
+    }
+
+    @media (orientation: portrait) {
+      #GameLoader { background-image: var(--loader-portrait); }
+    }
+
+    #GameLoader.is-hidden { opacity: 0; pointer-events: none; }
+    #GameLoader.is-gone   { display: none; }
+
+    /* ---- необязательная полоска-индикатор, можно удалить весь блок ---- */
+    #GameLoaderBar {
+      position: absolute;
+      left: 50%;
+      bottom: calc(8% + var(--safe-bottom, 0px));
+      transform: translateX(-50%);
+      width: 42%;
+      max-width: 420px;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, .35);
+      overflow: hidden;
+    }
+    #GameLoaderBar > i {
+      display: block;
+      width: 35%;
+      height: 100%;
+      border-radius: 999px;
+      background: #ffffff;
+      animation: GameLoaderSlide 1.2s ease-in-out infinite;
+    }
+    @keyframes GameLoaderSlide {
+      0%   { transform: translateX(-120%); }
+      100% { transform: translateX(400%); }
+    }
+    /* ---- конец необязательного блока ---- */
+  </style>
+
+</head>
+
+<body>
+
+  <div id="GameLoader">
+    <div id="GameLoaderBar"><i></i></div>
+  </div>
+
+  <!-- dna-divers:platform:start -->
+<script src="./sitelock.js"></script>
+
+<!-- dna-divers:poki-bootstrap -->
+<script>
+  (function () {
+    // Turn this off to compare the clean baseline with and without the input compatibility fix.
+    var allowCanvasKeyboardBubbling = true;
+    if (allowCanvasKeyboardBubbling) {
+      window.addEventListener('keydown', function (event) {
+        var canvas = document.getElementById('GameCanvas');
+        if (!canvas || event.target !== canvas || !event.isTrusted) return;
+
+        // Cocos stops native keydown on the canvas; Poki observes it on document in the bubble phase.
+        // Keep the original trusted event and its default prevention, allowing it past the canvas.
+        var ownStop = Object.getOwnPropertyDescriptor(event, 'stopPropagation');
+        var originalStop = event.stopPropagation;
+        function stopOutsideCanvas() {
+          if (this.currentTarget !== canvas) originalStop.call(this);
+        }
+        try {
+          Object.defineProperty(event, 'stopPropagation', {
+            configurable: true, writable: true, value: stopOutsideCanvas
+          });
+        } catch (_) { return; }
+
+        // A microtask can run between native event listeners; restore only after the dispatch task.
+        setTimeout(function () {
+          if (event.stopPropagation !== stopOutsideCanvas) return;
+          if (ownStop) Object.defineProperty(event, 'stopPropagation', ownStop);
+          else delete event.stopPropagation;
+        }, 0);
+      }, true);
+    }
+
+    var pokiInitPromise;
+    try {
+      if (!window.PokiSDK || typeof PokiSDK.init !== 'function') {
+        pokiInitPromise = Promise.resolve(false);
+      } else {
+        pokiInitPromise = Promise.resolve(PokiSDK.init()).then(
+          function () { console.log("Poki SDK successfully initialized"); return true; },
+          function () { console.log("Initialized, but the user likely has adblock"); return false; }
+        );
+      }
+    } catch (error) {
+      console.log("Initialized, but the user likely has adblock");
+      pokiInitPromise = Promise.resolve(false);
+    }
+    // PokiPlatform.ts sends measure events only after this resolves true; WebPlatform hides ads when it is false.
+    window.__pokiInitPromise = pokiInitPromise;
+
+    // Adblock may remove the SDK entirely: every page-level call checks the method first.
+    function call(name, args) {
+      var sdk = window.PokiSDK;
+      if (sdk && typeof sdk[name] === 'function') return sdk[name].apply(sdk, args || []);
+    }
+
+    window.__dnaDiversPlatform = {
+      id: 'poki',
+      sdk: 'poki',
+      ready: pokiInitPromise.then(function () {}),
+      setDebug: function (debug) { call('setDebug', [debug]); },
+      loadingStart: function () { call('gameLoadingStart'); },
+      loadingFinished: function () { call('gameLoadingFinished'); }
+    };
+  })();
+</script>
+<!-- dna-divers:platform:end -->
+
+  <script>
+    // Keep game controls from scrolling the hosting page (any portal iframe).
+    window.addEventListener('keydown', ev => {
+      if (['ArrowDown', 'ArrowUp', ' '].includes(ev.key)) {
+          ev.preventDefault();
+      }
+    });
+    window.addEventListener('wheel', ev => ev.preventDefault(), { passive: false });
+  </script>
+
+  <script>
+  // Boot watchdog. Runs after the platform SDK, so Poki playtests capture every line.
+  // While the loader is up (and a few ticks after) logs the engine state every 2 s: where loading stalls,
+  // whether frames are drawn, whether the WebGL context survives. Cocos 3.8 never rebuilds a lost context: the canvas stays black.
+  (function () {
+    var TICK_MS = 2000;
+    var STOP_AT_MS = 120000;  // page time: no ticks past this even if the loader is still up
+    var TICKS_AFTER_LOADER = 5;
+    var MAX_ERRORS = 20;
+
+    var errors = 0;
+    var contextLost = false;
+    var gfxLogged = false;
+    var ticksAfterLoader = 0;
+    var lastFrames = 0;
+    var lastAt = performance.now();
+
+    function out(level, message) {
+      console[level]('[Boot] +' + performance.now().toFixed(0) + 'ms ' + message);
+    }
+    function cut(text, max) {
+      text = String(text);
+      return text.length > max ? text.slice(0, max) + '...' : text;
+    }
+    function mb(bytes) {
+      return Math.round((bytes || 0) / 1048576) + 'MB';
+    }
+
+    out('info', 'device mem=' + (navigator.deviceMemory || '?') + 'GB cores=' + (navigator.hardwareConcurrency || '?')
+      + ' screen=' + screen.width + 'x' + screen.height + ' view=' + innerWidth + 'x' + innerHeight + ' dpr=' + devicePixelRatio);
+    out('info', 'ua ' + navigator.userAgent);
+
+    // Capture phase: failed <script>/<img> loads and WebGL context events do not bubble.
+    window.addEventListener('error', function (e) {
+      if (errors >= MAX_ERRORS) return;
+      errors++;
+      var target = e.target;
+      if (target && target !== window && (target.src || target.href)) {
+        out('error', 'resource failed: ' + (target.src || target.href));
+        return;
+      }
+      var stack = e.error && e.error.stack ? ' | ' + e.error.stack : '';
+      out('error', cut('error: ' + e.message + ' @ ' + (e.filename || '?') + ':' + e.lineno + ':' + e.colno + stack, 800));
+    }, true);
+    window.addEventListener('unhandledrejection', function (e) {
+      if (errors >= MAX_ERRORS) return;
+      errors++;
+      var reason = e.reason;
+      out('error', cut('unhandled rejection: ' + ((reason && (reason.stack || reason.message)) || reason), 800));
+    });
+    window.addEventListener('webglcontextcreationerror', function (e) {
+      out('error', 'WebGL context creation failed: ' + (e.statusMessage || '?'));
+    }, true);
+    window.addEventListener('webglcontextlost', function (e) {
+      contextLost = true;
+      out('warn', 'WebGL context lost' + (e.statusMessage ? ': ' + e.statusMessage : ''));
+    }, true);
+    window.addEventListener('webglcontextrestored', function () {
+      out('warn', 'WebGL context restored (the engine does not rebuild GPU resources)');
+    }, true);
+
+    function tick() {
+      var now = performance.now();
+      var cc = window.cc;
+      var director = cc && cc.director;
+      var device = director && director.root && director.root.device;
+      if (device && !gfxLogged) {
+        gfxLogged = true;
+        var api = cc.gfx && cc.gfx.API ? cc.gfx.API[device.gfxAPI] : device.gfxAPI;
+        out('info', 'gfx ' + api + ' renderer="' + device.renderer + '" vendor="' + device.vendor + '"');
+      }
+      var gl = device && device.gl;
+      if (gl && gl.isContextLost && gl.isContextLost()) contextLost = true;
+
+      var frames = director && director.getTotalFrames ? director.getTotalFrames() : 0;
+      var fps = (frames - lastFrames) * 1000 / Math.max(1, now - lastAt);
+      lastFrames = frames;
+      lastAt = now;
+      var resources = performance.getEntriesByType('resource');
+      var bytes = 0;
+      for (var i = 0; i < resources.length; i++) bytes += resources[i].transferSize || 0;
+      var canvas = document.getElementById('GameCanvas');
+      var loader = document.getElementById('GameLoader');
+      var loaderShown = !!loader && !loader.classList.contains('is-hidden');
+
+      var line = 'tick engine=' + (device ? 'gfx' : cc ? 'js' : 'none')
+        + ' scene=' + (director && director.getScene && director.getScene() ? 'yes' : 'no')
+        + ' frames=' + frames + ' fps=' + fps.toFixed(0);
+      if (device) {
+        var memory = device.memoryStatus || {};
+        line += ' draws=' + device.numDrawCalls + ' gpu=' + mb(memory.textureSize) + '+' + mb(memory.bufferSize);
+      }
+      line += ' canvas=' + (canvas ? canvas.width + 'x' + canvas.height : '?')
+        + ' net=' + resources.length + '/' + mb(bytes)
+        + ' heap=' + (performance.memory ? mb(performance.memory.usedJSHeapSize) : '?')
+        + ' loader=' + (loaderShown ? 'shown' : 'hidden')
+        + (document.hidden ? ' page-hidden' : '')
+        + (contextLost ? ' CONTEXT-LOST' : '');
+      out(contextLost ? 'warn' : 'info', line);
+
+      if (!loaderShown) ticksAfterLoader++;
+      if (ticksAfterLoader >= TICKS_AFTER_LOADER || now >= STOP_AT_MS) {
+        clearInterval(timer);
+        out('info', 'watchdog stop' + (loaderShown ? ', loader still shown' : ''));
+      }
+    }
+
+    var timer = setInterval(function () {
+      try { tick(); } catch (e) { clearInterval(timer); out('warn', 'watchdog failed: ' + e); }
+    }, TICK_MS);
+  })();
+  </script>
+
+  <script>
+  // ===================== управление загрузчиком =====================
+  (function () {
+    var AUTO_HIDE_ON_SCENE = true;   // сцена загрузилась; ждём прогрева рендера
+    var SAFETY_AFTER_SCENE = 15000;  // мс после появления сцены: прогрев так и не сообщил о готовности
+    var SAFETY_TIMEOUT     = 120000; // мс, аварийный предел — экран не залипнет навсегда
+    var FADE_MS            = 400;    // должно совпадать с transition в CSS
+
+    var el = document.getElementById('GameLoader');
+    var hidden = false;
+    var poll = null;
+    var sceneStarted = false;
+    var sdkFinished = false;
+    var visualReady = false;
+    var platform = window.__dnaDiversPlatform;
+    var needsCrazyGamesReady = platform && platform.id === 'crazygames';
+    function platformAllowsHide() {
+      return !needsCrazyGamesReady ||
+        (platform.settled === true && platform.failed !== true && visualReady);
+    }
+
+    function hide (reason) {
+      if (hidden || !el || !platformAllowsHide()) return;
+      hidden = true;
+      if (poll) { clearInterval(poll); poll = null; }
+      window.__loadTrace?.mark('loader hidden', { reason: reason || 'manual' });
+      window.__loadTrace?.scheduleReport(2000);
+      el.classList.add('is-hidden');
+      setTimeout(function () { el.classList.add('is-gone'); }, FADE_MS);
+    }
+
+    function show () {
+      if (!el) return;
+      hidden = false;
+      el.classList.remove('is-gone');
+      requestAnimationFrame(function () { el.classList.remove('is-hidden'); });
+    }
+
+    var sceneSafety = null;
+    function hideWhenReady () {
+      if (visualReady && (sceneStarted || sdkFinished)) { hide('ready'); return; }
+      // Пока сцены нет, показывать нечего: под экраном только пустой canvas. Медленная загрузка
+      // (CDN портала, SDK) не должна открывать его раньше времени.
+      if ((sceneStarted || sdkFinished) && !sceneSafety) {
+        sceneSafety = setTimeout(function () {
+          sceneSafety = null;
+          hide('safety timeout after scene');
+        }, SAFETY_AFTER_SCENE);
+      }
+    }
+
+    // Ручное управление из игры: window.hideGameLoader() / window.showGameLoader()
+    window.hideGameLoader = hide;
+    window.showGameLoader = show;
+    window.markGameVisualReady = function () {
+      visualReady = true;
+      window.__loadTrace?.mark('visual ready');
+      hideWhenReady();
+    };
+
+    // 1) платформа получает сигнал загрузки; экран остаётся до прогрева теней
+    if (platform && typeof platform.loadingFinished === 'function') {
+      var origFinished = platform.loadingFinished;
+      platform.loadingFinished = function () {
+        sdkFinished = true;
+        window.__loadTrace?.mark('platform.loadingFinished', { platform: platform.id });
+        hideWhenReady();
+        return origFinished.apply(platform, arguments);
+      };
+    }
+    if (needsCrazyGamesReady && platform.ready && typeof platform.ready.then === 'function') {
+      platform.ready.then(function () {
+        sdkFinished = true;
+        window.__loadTrace?.mark('platform ready', { platform: platform.id });
+        hideWhenReady();
+      });
+    }
+
+    // 2) запасной признак готовности сцены
+    if (AUTO_HIDE_ON_SCENE) {
+      poll = setInterval(function () {
+        try {
+          if (window.cc && cc.director && cc.director.getScene && cc.director.getScene()) {
+            clearInterval(poll);
+            poll = null;
+            sceneStarted = true;
+            window.__loadTrace?.mark('scene available');
+            hideWhenReady();
+          }
+        } catch (e) { /* движок ещё не готов */ }
+      }, 100);
+    }
+
+    // 3) страховка
+    setTimeout(function () { hide('safety timeout'); }, SAFETY_TIMEOUT);
+  })();
+  </script>
+
+  <div id="GameDiv">
+      <div id="Cocos3dGameContainer">
+        <canvas id="GameCanvas" oncontextmenu="event.preventDefault()" tabindex="0"></canvas>
+      </div>
+    </div>
+  
+
+<!-- Polyfills bundle. -->
+
+<script src="src/polyfills.bundle.js" charset="utf-8"> </script>
+
+
+<!-- SystemJS support. -->
+<script src="src/system.bundle.js" charset="utf-8"> </script>
+
+<!-- Import map -->
+<script type="systemjs-importmap">{"imports":{"cc":"./cocos-js/cc.js"}}</script>
+
+<script>
+    System.import('./index.js').catch(function(err) { console.error(err); })
+</script>
+
+  <script>
+    (function () {
+      var data = {"head":"DNAPACK1","headSize":16,"packs":[{"url":"assets/main/packs/bin-0.ac55ee57.bin","group":"bin","size":982433,"base":"assets/main/native/","files":[["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@05d56.bin",2132],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@0b01f.bin",95999],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@0d7dc.bin",2646],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@20b96.bin",436],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@227f4.bin",9109],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@2c6dd.bin",11343],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@4688b.bin",2837],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@4993b.bin",99090],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@4dfae.bin",136151],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@4f51a.bin",11514],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@5f569.bin",105401],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@648c3.bin",11778],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@72d04.bin",2629],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@7dc71.bin",10699],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@8c5ad.bin",111566],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@90ca7.bin",11217],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@9eb73.bin",107311],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@a6df2.bin",7661],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@a8871.bin",2176],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@ab6ea.bin",112774],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@b03f1.bin",7687],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@ba759.bin",97971],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@d9236.bin",11190],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@e0ab3.bin",11100]]},{"url":"assets/main/packs/bin-1.edd49d87.bin","group":"bin","size":1042166,"base":"assets/main/native/","files":[["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@e369b.bin",113058],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@f5373.bin",7636],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@fac88.bin",2792],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@fb4c1.bin",2283],["01/01b39aca-9ecc-4a11-8768-2593bb799c5f@feda5.bin",2538],["02/02d54cb0-5a31-48b8-82af-bd5e0b4811f4@b8f3f.bin",1321],["02/02d54cb0-5a31-48b8-82af-bd5e0b4811f4@e03c4.bin",1340],["02/02d54cb0-5a31-48b8-82af-bd5e0b4811f4@f684a.bin",1457],["04/04b6cbe1-b306-4c3c-b898-115f378df776@10de1.bin",10931],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@0a495.bin",1615],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@4b09b.bin",1496],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@4d561.bin",3955],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@6dc08.bin",7365],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@718ae.bin",4814],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@7731b.bin",653],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@a1b1d.bin",2508],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@aa7ed.bin",2381],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@bef8f.bin",9293],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@c8d02.bin",1392],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@d2b14.bin",1251],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@d7a56.bin",816],["05/0510a4e5-52d1-4fab-af92-2c9a4b861404@f7185.bin",4556],["09/09e2bf81-c28c-4904-9be9-086bce5893b2@26989.bin",85002],["09/09e2bf81-c28c-4904-9be9-086bce5893b2@47f27.bin",14642],["0f/0f7ce3d2-c97c-49ef-bba0-3ce2466ff4f3@17123.bin",92615],["0f/0f7ce3d2-c97c-49ef-bba0-3ce2466ff4f3@94c83.bin",541],["12/1263d74c-8167-4928-91a6-4e2672411f47@8abdc.bin",15328],["12/1263d74c-8167-4928-91a6-4e2672411f47@fc873.bin",236],["13/13e887d3-9e6c-46bd-8114-b72d55e2ef97@0a14d.bin",10190],["19/196665bf-0462-4721-9aaa-2cc93b9ab2da@84652.bin",83866],["1d/1d0acf28-25f0-474d-9e09-dd5945565e46@74fe9.bin",10345],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@12c5d.bin",4097],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@192c6.bin",4899],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@3cef8.bin",4260],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@73ea3.bin",3597],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@7f891.bin",2046],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@8f6e0.bin",1792],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@9997a.bin",4931],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@9d3a3.bin",1982],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@a2dee.bin",4812],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@a38a8.bin",3129],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@dba7f.bin",3998],["1f/1f351c26-dfc0-4194-807d-3ac86370badd@e7c0f.bin",4127],["20/20e84af6-a481-40fa-8c3e-4806ba619300@02d6e.bin",4497],["20/20e84af6-a481-40fa-8c3e-4806ba619300@049f7.bin",383],["20/20e84af6-a481-40fa-8c3e-4806ba619300@04e94.bin",4721],["20/20e84af6-a481-40fa-8c3e-4806ba619300@0d8cb.bin",438],["20/20e84af6-a481-40fa-8c3e-4806ba619300@0e642.bin",397],["20/20e84af6-a481-40fa-8c3e-4806ba619300@0e85b.bin",3808],["20/20e84af6-a481-40fa-8c3e-4806ba619300@12f1a.bin",562],["20/20e84af6-a481-40fa-8c3e-4806ba619300@13065.bin",4334],["20/20e84af6-a481-40fa-8c3e-4806ba619300@14bca.bin",2667],["20/20e84af6-a481-40fa-8c3e-4806ba619300@150d1.bin",4688],["20/20e84af6-a481-40fa-8c3e-4806ba619300@1829f.bin",2072],["20/20e84af6-a481-40fa-8c3e-4806ba619300@231fa.bin",3973],["20/20e84af6-a481-40fa-8c3e-4806ba619300@26d16.bin",4995],["20/20e84af6-a481-40fa-8c3e-4806ba619300@33e38.bin",2477],["20/20e84af6-a481-40fa-8c3e-4806ba619300@3a987.bin",1186],["20/20e84af6-a481-40fa-8c3e-4806ba619300@3af87.bin",3183],["20/20e84af6-a481-40fa-8c3e-4806ba619300@47699.bin",2767],["20/20e84af6-a481-40fa-8c3e-4806ba619300@4cbb7.bin",1306],["20/20e84af6-a481-40fa-8c3e-4806ba619300@4d15d.bin",413],["20/20e84af6-a481-40fa-8c3e-4806ba619300@4d48d.bin",1011],["20/20e84af6-a481-40fa-8c3e-4806ba619300@4efa3.bin",3762],["20/20e84af6-a481-40fa-8c3e-4806ba619300@51673.bin",2384],["20/20e84af6-a481-40fa-8c3e-4806ba619300@5b688.bin",4874],["20/20e84af6-a481-40fa-8c3e-4806ba619300@641d8.bin",1067],["20/20e84af6-a481-40fa-8c3e-4806ba619300@662f0.bin",5537],["20/20e84af6-a481-40fa-8c3e-4806ba619300@693e3.bin",3820],["20/20e84af6-a481-40fa-8c3e-4806ba619300@6d440.bin",2350],["20/20e84af6-a481-40fa-8c3e-4806ba619300@6db37.bin",4254],["20/20e84af6-a481-40fa-8c3e-4806ba619300@70384.bin",4278],["20/20e84af6-a481-40fa-8c3e-4806ba619300@72644.bin",3219],["20/20e84af6-a481-40fa-8c3e-4806ba619300@769af.bin",3885],["20/20e84af6-a481-40fa-8c3e-4806ba619300@76f58.bin",2598],["20/20e84af6-a481-40fa-8c3e-4806ba619300@7d401.bin",157],["20/20e84af6-a481-40fa-8c3e-4806ba619300@7ecdd.bin",2127],["20/20e84af6-a481-40fa-8c3e-4806ba619300@82019.bin",1204],["20/20e84af6-a481-40fa-8c3e-4806ba619300@848a1.bin",3547],["20/20e84af6-a481-40fa-8c3e-4806ba619300@851b5.bin",2359],["20/20e84af6-a481-40fa-8c3e-4806ba619300@8c901.bin",4531],["20/20e84af6-a481-40fa-8c3e-4806ba619300@8d90e.bin",4949],["20/20e84af6-a481-40fa-8c3e-4806ba619300@8e4ae.bin",4261],["20/20e84af6-a481-40fa-8c3e-4806ba619300@8eedf.bin",1273],["20/20e84af6-a481-40fa-8c3e-4806ba619300@95ec4.bin",1738],["20/20e84af6-a481-40fa-8c3e-4806ba619300@96cca.bin",1253],["20/20e84af6-a481-40fa-8c3e-4806ba619300@980fc.bin",3587],["20/20e84af6-a481-40fa-8c3e-4806ba619300@9c979.bin",4693],["20/20e84af6-a481-40fa-8c3e-4806ba619300@9e176.bin",4501],["20/20e84af6-a481-40fa-8c3e-4806ba619300@a7354.bin",3703],["20/20e84af6-a481-40fa-8c3e-4806ba619300@b5cd9.bin",1608],["20/20e84af6-a481-40fa-8c3e-4806ba619300@b8283.bin",2317],["20/20e84af6-a481-40fa-8c3e-4806ba619300@bdd5f.bin",3848],["20/20e84af6-a481-40fa-8c3e-4806ba619300@bf922.bin",3253],["20/20e84af6-a481-40fa-8c3e-4806ba619300@bff47.bin",158],["20/20e84af6-a481-40fa-8c3e-4806ba619300@c04cc.bin",2464],["20/20e84af6-a481-40fa-8c3e-4806ba619300@c4f83.bin",4077],["20/20e84af6-a481-40fa-8c3e-4806ba619300@c6b9d.bin",3459],["20/20e84af6-a481-40fa-8c3e-4806ba619300@ceb37.bin",4920],["20/20e84af6-a481-40fa-8c3e-4806ba619300@cec1d.bin",4547],["20/20e84af6-a481-40fa-8c3e-4806ba619300@d1cbb.bin",4570],["20/20e84af6-a481-40fa-8c3e-4806ba619300@d395b.bin",137],["20/20e84af6-a481-40fa-8c3e-4806ba619300@d8c05.bin",384],["20/20e84af6-a481-40fa-8c3e-4806ba619300@e2302.bin",3678],["20/20e84af6-a481-40fa-8c3e-4806ba619300@e7c8a.bin",1180],["20/20e84af6-a481-40fa-8c3e-4806ba619300@ef324.bin",602],["20/20e84af6-a481-40fa-8c3e-4806ba619300@f2a4b.bin",3868],["25/257bf8b2-b604-4ca0-b7a0-bd7c8695eea8@cd6df.bin",2987],["26/26051987-a0df-44e5-acfe-46ff588d6bf6@2891e.bin",2728],["26/26051987-a0df-44e5-acfe-46ff588d6bf6@5e424.bin",487],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@14fe2.bin",64633],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@34cbc.bin",975],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@361bc.bin",857],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@54e44.bin",10649],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@5ad19.bin",985],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@71e7f.bin",5486],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@7e812.bin",10734],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@9f1cb.bin",5656],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@a891f.bin",997],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@b8ff8.bin",1013],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@b9ebd.bin",855],["29/29895ace-6a77-4add-ae82-24c2f8d22aec@ca01b.bin",19421],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@1e7fb.bin",4401],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@233b4.bin",5221],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@49055.bin",4103],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@59757.bin",4877],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@672db.bin",4437],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@96c8b.bin",5245],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@aceeb.bin",4937],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@d5eb6.bin",4903],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@ec8ba.bin",4944],["2f/2f09d648-e2de-4813-8d9b-a37dc304c481@f3d27.bin",3859],["31/3130a24e-5a4a-4094-b6a9-9d66aa6d994b@2cc37.bin",15013],["31/3130a24e-5a4a-4094-b6a9-9d66aa6d994b@381b8.bin",49277],["31/3130a24e-5a4a-4094-b6a9-9d66aa6d994b@9332c.bin",288],["31/3130a24e-5a4a-4094-b6a9-9d66aa6d994b@e1619.bin",12289],["34/346b33b6-1fdb-44f9-b215-b71b3b5b778b@7be3b.bin",9075],["37/3700a8c9-a70d-4c0c-bec9-630d84616643@37334.bin",84],["37/3700a8c9-a70d-4c0c-bec9-630d84616643@65844.bin",88],["37/3700a8c9-a70d-4c0c-bec9-630d84616643@995a0.bin",22900],["37/3700a8c9-a70d-4c0c-bec9-630d84616643@f13b4.bin",35001]]},{"url":"assets/main/packs/bin-2.2f2217da.bin","group":"bin","size":409892,"base":"assets/main/native/","files":[["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@3ff84.bin",9670],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@4b09b.bin",1496],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@4d561.bin",3955],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@6dc08.bin",7365],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@718ae.bin",4814],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@7731b.bin",653],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@973d3.bin",2119],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@a1b1d.bin",2508],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@aa7ed.bin",2381],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@c8d02.bin",1392],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@d2b14.bin",1251],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@d7a56.bin",816],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@f7185.bin",4556],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@f94a2.bin",1886],["3b/3b14ac85-f222-4384-8571-198c1e5b7d7c@fa927.bin",1863],["3b/3b8a4529-90d0-4248-b0cd-4a9627ea5f8a@57f87.bin",139014],["5c/5c29bc1a-37cd-496f-8e22-9bf83b1cb234@2f893.bin",6978],["5c/5c29bc1a-37cd-496f-8e22-9bf83b1cb234@5a892.bin",7316],["5c/5c29bc1a-37cd-496f-8e22-9bf83b1cb234@68c08.bin",7467],["5e/5e3dea00-e844-4044-a98f-8297f4e74846@c4dfc.bin",9288],["6a/6ad8e4fa-4012-49ec-9e0b-0cbfad9c9d06@15d1f.bin",193088]]},{"url":"assets/main/packs/bin-3.1f176723.bin","group":"bin","size":1288138,"base":"assets/main/native/","files":[["6a/6ad8e4fa-4012-49ec-9e0b-0cbfad9c9d06@2db77.bin",1288122]]},{"url":"assets/main/packs/bin-4.5a9db0a2.bin","group":"bin","size":307524,"base":"assets/main/native/","files":[["6a/6ad8e4fa-4012-49ec-9e0b-0cbfad9c9d06@98683.bin",90342],["6a/6ad8e4fa-4012-49ec-9e0b-0cbfad9c9d06@9f2e8.bin",188456],["6a/6ad8e4fa-4012-49ec-9e0b-0cbfad9c9d06@ea849.bin",28710]]},{"url":"assets/main/packs/bin-5.9151b72d.bin","group":"bin","size":1047198,"base":"assets/main/native/","files":[["6a/6ad8e4fa-4012-49ec-9e0b-0cbfad9c9d06@ef011.bin",1047182]]},{"url":"assets/main/packs/bin-6.d4bffaea.bin","group":"bin","size":448608,"base":"assets/main/native/","files":[["6b/6ba67c5c-bde9-438d-bb77-7d87e8420382@80c75.bin",2272],["71/71161d72-1f7e-40cb-b720-d1ef4396f7d4@fa83e.bin",849],["7c/7c663c1e-5118-408d-9d10-5315c902feb2@18930.bin",2900],["7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@05d95.bin",787],["7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@26cea.bin",790],["7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@68e34.bin",754],["7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@7a233.bin",50107],["7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@9e31e.bin",15732],["83/83e408a8-6e6b-4d72-a853-09e0d6c1b383@687f5.bin",393],["83/83e408a8-6e6b-4d72-a853-09e0d6c1b383@84b22.bin",604],["84/84cf834d-01c3-4d20-844c-64938231d042@f7c96.bin",8583],["85/85257d09-a859-4d80-a798-7a6b1c6f35fe@027b2.bin",3284],["85/85257d09-a859-4d80-a798-7a6b1c6f35fe@81229.bin",5255],["85/85257d09-a859-4d80-a798-7a6b1c6f35fe@8d37d.bin",4176],["8b/8b4ef1e5-1c21-4f70-80eb-aaab1b74a3ab@0db44.bin",3259],["8b/8b4ef1e5-1c21-4f70-80eb-aaab1b74a3ab@14584.bin",3217],["8b/8b4ef1e5-1c21-4f70-80eb-aaab1b74a3ab@16eb4.bin",3227],["8b/8b4ef1e5-1c21-4f70-80eb-aaab1b74a3ab@babc8.bin",3255],["8d/8d191d9d-a778-41bb-9967-c738f5d2b650@f1de2.bin",5843],["90/904f5378-6626-422c-8e74-19a69fc12126@99ef8.bin",284],["90/904f5378-6626-422c-8e74-19a69fc12126@f2384.bin",47897],["91/91f6c9ac-e96d-4f7a-8e3c-f5e299e081a2@3192d.bin",2968],["91/91f6c9ac-e96d-4f7a-8e3c-f5e299e081a2@9df87.bin",25048],["98/98cea336-768f-459f-b005-7bf8822d7dd6@97b51.bin",333],["b1/b198c3ec-f2bb-4d9e-bfbd-3b38ff748b9e@bf020.bin",11107],["c0/c0759d16-69d0-4680-88e8-e3d60b00f05c@0e32c.bin",9476],["c0/c0759d16-69d0-4680-88e8-e3d60b00f05c@69bb6.bin",735],["c7/c76a7476-7a35-4cd0-91b1-179bf6976bce@8d802.bin",2784],["d0/d08d8bfd-1278-4d00-9bf4-fa99c9f09afd@8509b.bin",6281],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@0a495.bin",1615],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@4a4e8.bin",253],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@4b09b.bin",1496],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@4d561.bin",3955],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@5c40e.bin",98],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@605e7.bin",236],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@718ae.bin",4814],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@7731b.bin",653],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@79b90.bin",98],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@9f624.bin",247],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@a1b1d.bin",2508],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@aa7ed.bin",2381],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@b3bf6.bin",98],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@bef8f.bin",9293],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@c8d02.bin",1392],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@d2b14.bin",1251],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@d7a56.bin",816],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@deb56.bin",248],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@ef230.bin",6075],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@f38b5.bin",249],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@f7185.bin",4556],["d9/d9636539-19c3-4b3f-ad04-bebc7909b19b@f8489.bin",98],["f1/f1ceb162-1d10-4562-8e78-f1fdc27fb446@37334.bin",389],["f1/f1ceb162-1d10-4562-8e78-f1fdc27fb446@52f06.bin",353],["f1/f1ceb162-1d10-4562-8e78-f1fdc27fb446@79abb.bin",1622],["f1/f1ceb162-1d10-4562-8e78-f1fdc27fb446@8fd2d.bin",625],["f1/f1ceb162-1d10-4562-8e78-f1fdc27fb446@a0df3.bin",1134],["f1/f1ceb162-1d10-4562-8e78-f1fdc27fb446@cbcd6.bin",8222],["f1/f1ceb162-1d10-4562-8e78-f1fdc27fb446@cf9c6.bin",4055],["f1/f1ceb162-1d10-4562-8e78-f1fdc27fb446@d80ae.bin",2826],["f2/f2f3bf23-32b4-4c98-b893-e14804490695@686d2.bin",9680],["fa/fa5db643-1173-4229-a03b-3e57ba49d4d8@7609f.bin",155056]]},{"url":"assets/main/packs/ui-0.c99e6037.bin","group":"ui","size":1039978,"base":"assets/main/native/","files":[["01/018a5066-f2ad-40c4-95ef-6afa4a947a0e.webp",15800],["01/01dc9f3d-2009-42ab-8996-2babc659fc6b.webp",9294],["04/04d41259-afe5-458d-ada4-e7a25b1d9965.webp",6418],["08/08146ef4-eeed-4700-904c-cc61fc3a4c5f.webp",5624],["09/09489049-5f99-4e85-97b3-aa061820dd7a.webp",37124],["0a/0a627dbb-af92-4ce8-8301-d9ae9ae6c8fb.webp",1026],["0b/0b6ab220-cd00-41df-89d4-ce452fb5a8d7.webp",11868],["0b/0bf720c8-18e5-423e-a8bd-002a0376ddc3.webp",12092],["0d/0d0de9c6-a219-4a95-89c8-428c285e2577.webp",5320],["0e/0e38e001-c7c7-4c96-bc4b-3c4c453e7323.webp",2632],["10/10d54f60-4284-4e96-bb3e-cd7a65a0374e.webp",6068],["12/12838cc3-e51b-4aef-a8ff-6014368a4a54.webp",5118],["14/140eeac1-b302-43fa-a594-76e1ef0f3613.webp",17992],["14/14c8e2b8-675e-4c69-b033-9c79f8b90362.webp",6110],["15/15770207-8c3f-45c4-8c87-e56ffcbc6b0d.webp",3104],["16/16ce6a64-1113-421a-bbb2-e44aafeb1e55.webp",3098],["18/1837cb95-0eff-4e90-b6d7-f3172db2754f.webp",33058],["18/1861aa71-a5c7-4f1c-90fb-d8cc210113d7.webp",16116],["18/18a59e91-957c-4a6d-804a-8fbb3d1fbbe7.webp",8872],["1c/1c751cc7-15c2-4925-8507-93c7c15782ed.webp",12750],["1e/1ec70cfd-bc47-4204-8e3b-a4b7e2539499.webp",1806],["21/211b8c59-2351-4d51-b9e5-7a2fde6d9dca.webp",330],["23/230da084-b1c6-4453-a98b-ffa952523534.webp",14156],["24/2443dab1-ba5d-4f9c-84c6-e0c4c0f09c33.webp",4852],["24/24fb585e-3da7-4c22-920e-e5da2199d70f.webp",10544],["25/259d7b41-2a95-45c0-bbbc-b5fe89d49d71.webp",884],["27/27025bb2-ab7b-4c29-a69b-3695e5e0aadb.webp",9062],["29/2993afe9-779b-47fc-8899-b666a5b68754.webp",3664],["2b/2bb9f656-4dbf-4d43-8d40-9ce12345a840.webp",11448],["2c/2cc00407-4074-4cad-b5cf-cba42e2520f4.webp",10408],["2d/2d1bf0f5-fa6d-4783-aa72-ec876f02c9ba.webp",8872],["2d/2d50da92-bf09-4061-bd18-629ce032ead0.webp",14792],["32/324ed5c8-71c4-4feb-8bf5-77a74cfb1609.webp",14860],["32/32b26033-208b-48c5-9ca1-245224c712fb.webp",12510],["33/33121363-dc29-4052-b178-714a8d4dd706.webp",11252],["34/34891286-caf3-45c4-978f-dbfa098c2278.webp",10356],["34/34e6da4d-215b-4715-8dc4-c39cc4e42847.webp",8944],["35/3599f000-408a-4e15-9a1b-596f4c5cce8a.webp",1282],["38/388c3535-7076-4ed9-9c87-95c6fdead57b.webp",46632],["39/391249b5-e8fd-41e4-a4f5-55ffb9a57c18.webp",886],["39/39f94ea8-c849-431a-a087-81326ec2971c.webp",38370],["3a/3a7bd089-6181-4c39-be7e-733b9f54ce22.webp",6884],["3b/3b6e5b04-3d54-49d8-a6de-078d94f9ede0.webp",5316],["3b/3bacd27a-229a-423b-8171-38fb681bb101.webp",4300],["3b/3beff1d1-6d43-4cfd-aef4-dd4a8a410ae6.webp",8670],["3c/3c9eebcf-b2d7-4a44-9c32-c2dfe1aa51cc.webp",3098],["3d/3d26ba57-8afb-4a22-a3ca-dea06ce0b29d.webp",468],["3d/3d61a614-c41b-42b4-a7dd-7532e14f02fe.webp",4730],["3e/3e2ee0aa-b88d-487f-8584-1a60c4692bb3.webp",7766],["3e/3ea116d9-849e-4772-ade3-adebeebd84a9.webp",284],["3f/3f197875-2284-43be-9024-59439bda763d.webp",9940],["3f/3f72552f-174c-4dd7-a920-8cbd70cf2ecb.webp",11530],["42/42a59cd6-7f38-4f2e-b56e-a441f9bff263.webp",8550],["42/42e48e81-d82d-4104-bc84-b00677d73eeb.webp",8162],["43/43054b47-8cae-44ae-b354-19f757b892f0.webp",2788],["45/45135f80-e88f-4ee0-b189-d882b4bcdc7d.webp",3598],["45/454317d1-8975-449a-9d7e-c2a3b5be376f.webp",338],["47/478d09bb-9541-4254-8a3e-d77e6819ca54.webp",5692],["4a/4a4c5df6-c543-4a83-be8d-fd7479c65463.webp",13582],["4a/4aa31efd-60bf-497a-bd2d-838744c61e2c.webp",7280],["4c/4cda2e91-0328-4438-b207-3c3368d84f48.webp",10356],["4e/4e075457-e1cc-447e-8e82-8750157cc4e9.webp",9934],["4e/4e0a0724-6adc-47b1-87ff-ad95d6bd80af.webp",7410],["4f/4f7affd9-ee27-4f27-9d70-6084f9379012.webp",1476],["4f/4fabab93-437c-4ed2-9b68-01ef853a45bd.webp",19626],["4f/4fb85063-6d69-4934-b00f-a882d933cf47.webp",754],["4f/4fc23418-37c8-4bde-b61c-6ce6b77d5ea6.webp",11356],["52/5238aee5-edbf-41d6-9abe-e05803d78d18.webp",30184],["52/52579fa5-bf63-4b22-bf35-514c33f4262b.webp",13658],["52/529e3ea1-750c-45cc-b786-4a2b418240e8.webp",12286],["53/538b27a5-eccc-4e03-8448-430e277a6822.webp",984],["54/54423009-6d81-4d0d-9812-d0565bf667df.webp",6310],["54/54ecc316-09f3-4b73-885a-6275ba35ff8f.webp",1572],["55/552d57b4-ab45-484a-b98e-c3904feb88a7.webp",15504],["55/55785b2c-9721-4ff5-aee5-2e7be12214f9.webp",4790],["5a/5aa00f8e-0b35-4ed5-a416-68db9b26b512.webp",11906],["5b/5bc6f2db-6312-4fda-9387-1b950348963c.webp",3274],["5c/5c1310d9-3e52-498d-a965-2e2627ae31e7.webp",8858],["5c/5ca00841-adff-4912-9126-503c77357aa0.webp",25468],["5e/5e903103-d8ea-4e83-8b29-e83f2e7a42e1.webp",1908],["5f/5ff3b135-a8e1-41b7-b59c-73d97c20680d.webp",1624],["5f/5ffbe872-d5bb-48ca-aaad-d5e9f5527bf6.webp",11026],["60/609af30d-547e-426f-8697-e3dfa49cbec3.webp",5096],["60/60d208e6-0441-4971-beef-1c99d99f94c9.webp",9904],["63/63f95062-0eaf-45fa-aed0-fe0d7bdcdf86.webp",10814],["64/641d42ec-32dd-47c4-aa99-7e017f56777c.webp",1370],["64/64e6fd5a-dd6f-415a-a965-f9c02c27d5e0.webp",8966],["68/685ce6ff-60a2-4534-89b9-de011e4fc504.webp",14086],["68/68af4aa7-f1e7-4d65-b6dd-436755309b46.webp",2154],["69/69b8615b-ca81-465a-a5ad-4e294379a8c9.webp",2702],["6b/6bfa197b-8681-4ca5-8ddd-1a94b697b6cd.webp",9828],["6c/6c2e6657-eecd-4c09-80da-0d086a74187d.webp",10268],["6d/6d27f239-80e0-4a63-8237-e2bdc448b301.webp",9596],["70/70c676cd-482a-456f-886e-fb233f4cfa84.webp",3054],["70/70ce092b-7986-4cb9-8163-f920240f7d34.webp",2194],["71/71b36018-0cf9-49f2-ba73-54070498ee52.webp",10230],["72/72ee9ead-1a58-4495-8660-4e648de82452.webp",7298],["73/73e802d5-b3b9-42f7-9480-95d98a592da6.webp",15748],["74/74190e6c-76ff-4b32-b06a-18080dc8ca1e.webp",314],["74/743593de-2267-49ae-9160-cd49c713c300.webp",6466],["74/74fa5cd4-1ddd-46ce-8d47-1aea8adfa13f.webp",1664],["76/76b2a4d6-9ac8-4965-bb0e-4ec360169559.webp",622],["77/775060ad-f084-47d7-b290-11c2202c879e.webp",760],["78/78934f5d-2e97-43f7-a53c-745d2a176360.webp",6170],["78/789f3aa9-f565-43fb-9308-7feff106c619.webp",9654],["78/78a59a1d-1696-4141-b0fe-40efc6a23ee8.webp",16670],["7a/7a810ee3-7574-4c61-aff9-96b6f5ffa60b.webp",52292],["7a/7ad79559-6058-48fd-bd33-81c6d98a1643.webp",1846],["7b/7b265d4e-bfac-426e-a804-64811c1168ef.webp",12500],["7c/7cae4713-5fd3-4f32-b35f-ef2ec0f88ea5.webp",15160],["7d/7d8f9b89-4fd1-4c9f-a3ab-38ec7cded7ca.png",82],["7d/7dfc0b59-737a-4bdb-ad8b-f0f9327bccbb.webp",13820]]},{"url":"assets/main/packs/ui-1.579ebb8d.bin","group":"ui","size":1019622,"base":"assets/main/native/","files":[["80/80902baf-c2f1-4070-92ef-ef8cd1d32b0f.webp",15724],["82/827f0213-a977-4100-a7ac-2eb8124494ad.webp",6282],["82/8285f245-156b-48f8-8570-adf2db6931c1.webp",9496],["85/857e2f26-055d-4202-85c0-d702fe3acd13.webp",14174],["87/8755c3bb-d745-4079-abbf-2b797bfa235a.webp",3652],["88/880125d6-076c-4cdf-a2ee-c7f38e7ce386.webp",6794],["89/89e18af8-f6b2-44f1-a4ce-8c4a0d0ca860.webp",6392],["8a/8a8abbd3-b8d9-4c43-8de5-b795b5e41a28.webp",7112],["8b/8bb041e4-2fa0-4892-8b69-c40adbb62794.webp",18728],["8c/8cd98888-51e6-4ea8-acc7-33e4c1c51623.webp",6250],["8c/8cfa8200-213b-4a47-9832-cbc1c9449bf0.webp",988],["8c/8cfeeb2d-c60c-46ea-ab29-b5ec13331758.webp",278],["8d/8d2e6140-bdcc-4a03-ab6b-7993266842ee.webp",1196],["8f/8fdc6214-9a91-4c20-85a1-41cd640e7d8d.webp",10464],["8f/8ff740fb-e267-4b02-84ce-6ba80a85e1ba.webp",1754],["90/9025ff8f-7623-4801-951b-fb0a01085cff.webp",11914],["90/903227fe-15ab-40b2-8038-b27a1518c108.webp",14358],["93/9362eb06-4966-4131-b517-cbcc8b2b2175.webp",8612],["93/9386d30d-d350-4ca2-a416-0e606b070677.webp",97188],["94/94812545-f0b0-4388-bf45-b19df81a2a5b.webp",1168],["96/96bed456-e6e4-4201-9dc3-f3c942c02f55.webp",14898],["97/97f76637-e4cf-4369-8db7-028830535081.webp",2788],["99/992ea24d-837d-47f7-b161-7a6dc9019b16.webp",5878],["99/99c6307f-409d-4441-8af1-87fa9679dd70.webp",6766],["9b/9be8ea3d-08d8-466d-b7f2-f752c8f83b06.webp",8354],["9b/9bff3c7d-0249-490d-8560-b0e98c207a46.webp",8054],["a0/a0be9a91-6491-4ea0-ac52-61e77e152022.webp",7172],["a3/a333205f-e99b-45fa-8cb3-856fc382aac0.webp",7788],["a4/a4d82d48-c8b6-4025-9396-a02c978b0e3e.webp",17006],["a5/a5985409-e124-4ee4-9638-a0945704cff3.webp",9016],["a5/a5b6e758-5d7d-4c14-b517-e57c0f70b940.webp",516],["a5/a5f2d263-7f53-4f24-9a3d-b732754fee3f.webp",11286],["a6/a6f84bba-4275-4231-aeb9-571c511d29df.webp",3474],["a8/a85a843b-abfa-4d30-89c4-edf9c5b301d3.webp",4832],["a8/a8ba6862-d23f-432c-98a8-4f100ae2b50b.webp",2612],["a9/a91a0fb1-12f3-432c-8f51-9648f3aeefe2.webp",6628],["a9/a9d52a9a-192f-4d06-9cae-a9a69289424e.webp",41628],["ae/ae37bb0b-6268-42db-9204-cf04b5d1751d.webp",2910],["af/af594739-8ac8-4add-9f67-1e10299ad07b.webp",13604],["af/afc47931-f066-46b0-90be-9fe61f213428.png",1047],["b0/b0c1d791-2cbf-446a-870a-996be629793a.webp",1482],["b2/b2660561-8702-4be8-b505-36ce2d2d74a0.webp",13996],["b4/b45e71a1-a716-4a9d-a7f8-a5a42e584a03.webp",10606],["b4/b4bd7eee-3e80-481b-91c1-1a57f5dddfdd.webp",7504],["b7/b7be163b-c7b1-4755-bea4-f9538c723545.webp",9444],["b9/b902b062-feaf-4a58-a77c-af2dba57b934.webp",15746],["bb/bb167fa8-d114-4960-a793-29be003e5ec4.webp",10272],["bc/bcaa5c68-c680-4825-903b-ee43455195f5.webp",19388],["bf/bff54f82-eba5-4daf-8786-07364c246d95.webp",9596],["c0/c038ca9b-51f8-48c6-ac8f-60c295cc3417.webp",932],["c0/c0806364-550a-4789-a652-11eeabb13977.webp",2024],["c2/c246327b-25b3-4fa4-8471-eb40635fad69.webp",3764],["c2/c2925fa4-212b-4a4e-9e4c-51288d62518b.webp",308],["c3/c3585b38-f45c-4b2b-9ecd-42d428e3f10a.webp",14038],["c5/c5223aed-980e-4532-9381-07c204fbeabe.webp",1320],["c5/c56103e2-3d80-4267-8d1e-56a385243154.webp",44],["c8/c88abfb2-b413-4766-961a-371f6d410371.webp",2974],["c9/c90c7cec-9247-4e24-9683-4ce5f3c17593.webp",70578],["c9/c9e34a7c-3273-41ba-bd44-1f653f58c5ed.webp",14394],["cb/cb332307-294d-4f0d-9699-e5baad589451.webp",6410],["cd/cd1c1669-ce30-4778-b693-d4f1fd4a6869.webp",9642],["cd/cd3a871f-df2f-4db7-9275-bb5cac6021f4.webp",15958],["cd/cd441e58-56bd-449b-951e-33cba1745360.webp",10888],["ce/ce081d9f-4cac-4894-8efd-b98bb18c230f.webp",7418],["cf/cfded220-24b0-40df-ba18-cf43ada34f94.webp",14056],["d0/d0a1bc4f-d8b7-4162-8a13-2b708e01eb76.webp",10244],["d1/d1214109-f86b-4815-b3ad-7b23edfd9c83.webp",10694],["d2/d255a451-9c85-487b-9cb4-de91cd90369c.webp",3532],["d2/d2841e24-b9f4-4215-b62e-ebc74d1d3548.webp",6296],["d4/d49bfd0f-04f3-48e6-9849-3074e23e383b.webp",826],["d8/d816693f-5dc7-41b2-a456-a59dd785b5e4.webp",3490],["db/dbc92a00-31a8-4cd1-b4d6-6d8dd9381727.webp",11192],["db/dbddbde8-ee13-4a99-a40f-0213daeb6859.webp",11864],["dc/dc8a6b3b-b50c-49ed-9073-a0ef9cc58060.webp",60726],["de/de936a97-c2ef-4043-a020-bdfdc33ce0e3.webp",2802],["e2/e2fa78b0-f503-4631-be3d-53269a8d83ca.webp",29930],["e3/e3d10bbb-3d87-42da-94b6-92f0e1627284.webp",8876],["e5/e55b660e-b8cc-4f95-bd35-6ab050cebe43.webp",4144],["e7/e7adb677-c784-460f-8687-2757ebceb49b.webp",6478],["e9/e92de98d-ab69-4b35-93ae-16952245cd38.webp",12386],["ee/ee535cbd-9c6c-4e5a-a3f5-0996784c51ce.webp",17492],["f0/f0366950-6128-409c-a5ce-e7bfbafe1478.webp",9634],["f0/f05a5e94-2302-4dc8-a008-80268292b03d.webp",938],["f2/f20b53a1-d3e7-48a7-b69a-40ef818ab782.webp",2556],["f2/f2cda51d-7e51-4803-9dd5-1dceabb95952.webp",9070],["f4/f42929ea-283d-4aa3-bf07-eb031a699933.webp",44],["f5/f50b5816-7f96-4ba0-87a9-973acc816c1f.webp",870],["f5/f59dc549-75b8-4bf3-be22-494927905c08.webp",49790],["f7/f71ae7a8-e95e-43ba-b3c0-fd361fbac26e.webp",10224],["f8/f8e6db1d-168f-479d-a9ac-a045e3de69fd.webp",300],["f9/f9cab250-4896-4d40-a937-b7adf0bb4f2d.webp",5244],["f9/f9f474ed-a6e4-46f6-9ef6-45a6f90f2b70.webp",654],["fc/fce9b56a-00f4-43de-89fe-911f9265fb44.webp",13546],["fd/fda477ef-acbc-4736-bf15-0e1ce176c477.webp",9584],["fe/feb0a913-6e35-4fc3-8f56-fb9cae660147.webp",1196],["ff/ffb88a8f-af62-48f4-8f1d-3cb606443a43.png",1187],["ff/ffdc5a3a-ee00-429c-b905-e8417ea5e626.webp",12234]]},{"url":"assets/main/packs/tex3d-0.9faaa3bf.bin","group":"tex3d","size":984914,"base":"assets/main/native/","files":[["02/029d63ae-1166-45fd-b1ed-9fee005ac587.webp",102510],["03/0392bf77-adfe-412e-8ad6-866b5175d4f3.webp",4360],["04/0473a093-f0fc-4817-939a-c1a48cee07a7.webp",4790],["04/04d52487-c9a9-4012-ace1-a6184e2d9fda.webp",9634],["06/06f333ff-d7e4-4a93-a8ca-903b7d385c0b.webp",5236],["0a/0a66fbcd-b751-4ffd-b9e2-2e9368e4bce3.webp",4818],["0b/0b242c01-445d-445d-9c86-5fd2b654de24.webp",11422],["0c/0cb84b14-cc8c-40bc-be3b-3c8fb8f6ad6a.webp",8308],["16/1661153b-aada-4feb-83e8-683e27bffbe2.webp",1760],["1a/1a14a3e4-6d2e-4d33-9b97-09d05294a128.webp",71374],["1b/1bafd92d-2f75-42fa-8085-97a0e369b27b.webp",3098],["2c/2cde128c-cd7b-4003-b824-8b59010d7a71.webp",21492],["31/3158e5ea-907b-4256-b204-10a1d895b438.webp",41082],["32/32f7a8a6-ef77-4f6d-971a-983a2f0067f0.webp",10178],["41/411e9b70-f7b0-405d-9296-e1192b95e44a.webp",26738],["42/424a9635-dab3-4c83-8bc6-98596b4bc43e.webp",19514],["53/537c696c-17b4-4a36-b913-2995910c78dc.webp",30416],["57/57458757-8045-44ed-842d-b9847fc9839c.webp",1454],["57/57cfcc39-c00b-4618-80c8-404e328ffdfb.webp",7416],["58/580c47a3-0df1-4d7a-9535-8638e20085b4.webp",2442],["69/69be05dc-f731-40bf-9d17-2e253f5038ce.webp",138690],["6b/6bf0898d-90b5-4ebd-9a68-0757fdfb8b0f.webp",1942],["74/747f9bb3-de76-49a1-9437-cd1eaef4b932.webp",17498],["79/792308aa-9ca5-4a59-ab94-32af8e896eaa.webp",9690],["80/8000ca95-9dfa-4712-a97a-ec623106aeca.webp",5778],["a4/a4612fac-2007-40b0-b326-6c1e29b0d061.webp",3008],["a4/a471f2ff-0578-4f64-8bf1-4a646f580e63.webp",2708],["a5/a56ea58b-0a9a-44af-bd21-8035d2cc2203.webp",24670],["b0/b000b959-2016-49b7-bf0d-d3908baf7670.webp",47470],["b7/b7a5b739-c8d5-4449-b8a1-0ae0b99833ad.webp",3378],["b8/b8e126c8-6f69-4242-9e7e-7b23cbdddaa3.webp",364],["bc/bc51c8de-5550-44f2-9209-b71562237952.webp",81628],["be/be4bca2b-4d77-45bf-9de3-386700edf974.webp",7398],["bf/bf7c7820-980b-4a35-9fbe-a24c1800bc9b.webp",180640],["bf/bfefbe2a-a030-43e4-9f52-9aacd8960c0b.webp",6110],["ce/cebb17fd-a1f2-4e62-aac2-606cc51fad16.webp",1660],["d0/d09992ac-229a-4caf-8d1c-daaa648fd00e.webp",21728],["d1/d166f893-c80a-4e5f-b942-177a2f200f79.webp",42496]]},{"url":"assets/main/packs/tex3d-1.ffde5a06.bin","group":"tex3d","size":342850,"base":"assets/main/native/","files":[["d3/d37443e3-4dc8-4f3a-9023-10f2fec1c71c.webp",96210],["d4/d468ac6e-f48e-4f0f-a1ec-5c7901447142.webp",25162],["d5/d5ca58fb-67b4-424a-b0f2-c63d53dfa926.webp",11536],["d7/d7ab2269-830f-4a75-bdab-3acb052dae6e.webp",6524],["db/db981d39-52a8-49c5-a39f-cfc3f7a308ed.webp",164140],["dd/ddab3bf6-028a-4f14-af16-5e74e31611d3.webp",370],["de/de6dd96e-141e-4edf-b18a-29ced60bf111.webp",3838],["e8/e8b79428-bfdd-4806-bed7-9d76580f9718.webp",21226],["eb/eb1726b3-6e5a-459c-8152-5772abdfb6ac.webp",5600],["f9/f98b5637-2092-4ddd-8f9a-83c93fe456be.webp",8228]]},{"url":"assets/main/packs/tex3d-half-0.4a97686b.bin","group":"tex3d-half","size":520568,"base":"assets/main/native/","files":[["02/029d63ae-1166-45fd-b1ed-9fee005ac587.webp",36220],["03/0392bf77-adfe-412e-8ad6-866b5175d4f3.webp",2050],["04/0473a093-f0fc-4817-939a-c1a48cee07a7.webp",2498],["04/04d52487-c9a9-4012-ace1-a6184e2d9fda.webp",3836],["06/06f333ff-d7e4-4a93-a8ca-903b7d385c0b.webp",2134],["0a/0a66fbcd-b751-4ffd-b9e2-2e9368e4bce3.webp",2274],["0b/0b242c01-445d-445d-9c86-5fd2b654de24.webp",4822],["0c/0cb84b14-cc8c-40bc-be3b-3c8fb8f6ad6a.webp",3290],["16/1661153b-aada-4feb-83e8-683e27bffbe2.webp",734],["1a/1a14a3e4-6d2e-4d33-9b97-09d05294a128.webp",31154],["1b/1bafd92d-2f75-42fa-8085-97a0e369b27b.webp",1390],["2c/2cde128c-cd7b-4003-b824-8b59010d7a71.webp",8482],["31/3158e5ea-907b-4256-b204-10a1d895b438.webp",17082],["32/32f7a8a6-ef77-4f6d-971a-983a2f0067f0.webp",4460],["41/411e9b70-f7b0-405d-9296-e1192b95e44a.webp",10832],["42/424a9635-dab3-4c83-8bc6-98596b4bc43e.webp",8386],["53/537c696c-17b4-4a36-b913-2995910c78dc.webp",12890],["57/57458757-8045-44ed-842d-b9847fc9839c.webp",522],["57/57cfcc39-c00b-4618-80c8-404e328ffdfb.webp",2872],["58/580c47a3-0df1-4d7a-9535-8638e20085b4.webp",570],["69/69be05dc-f731-40bf-9d17-2e253f5038ce.webp",51042],["6b/6bf0898d-90b5-4ebd-9a68-0757fdfb8b0f.webp",656],["74/747f9bb3-de76-49a1-9437-cd1eaef4b932.webp",6664],["79/792308aa-9ca5-4a59-ab94-32af8e896eaa.webp",4076],["80/8000ca95-9dfa-4712-a97a-ec623106aeca.webp",2556],["a4/a4612fac-2007-40b0-b326-6c1e29b0d061.webp",1388],["a4/a471f2ff-0578-4f64-8bf1-4a646f580e63.webp",1130],["a5/a56ea58b-0a9a-44af-bd21-8035d2cc2203.webp",9120],["b0/b000b959-2016-49b7-bf0d-d3908baf7670.webp",20628],["b7/b7a5b739-c8d5-4449-b8a1-0ae0b99833ad.webp",1566],["b8/b8e126c8-6f69-4242-9e7e-7b23cbdddaa3.webp",164],["bc/bc51c8de-5550-44f2-9209-b71562237952.webp",34858],["be/be4bca2b-4d77-45bf-9de3-386700edf974.webp",3236],["bf/bf7c7820-980b-4a35-9fbe-a24c1800bc9b.webp",75198],["bf/bfefbe2a-a030-43e4-9f52-9aacd8960c0b.webp",2244],["ce/cebb17fd-a1f2-4e62-aac2-606cc51fad16.webp",798],["d0/d09992ac-229a-4caf-8d1c-daaa648fd00e.webp",8708],["d1/d166f893-c80a-4e5f-b942-177a2f200f79.webp",18088],["d3/d37443e3-4dc8-4f3a-9023-10f2fec1c71c.webp",27608],["d4/d468ac6e-f48e-4f0f-a1ec-5c7901447142.webp",9478],["d5/d5ca58fb-67b4-424a-b0f2-c63d53dfa926.webp",4596],["d7/d7ab2269-830f-4a75-bdab-3acb052dae6e.webp",2470],["db/db981d39-52a8-49c5-a39f-cfc3f7a308ed.webp",62690],["dd/ddab3bf6-028a-4f14-af16-5e74e31611d3.webp",196],["de/de6dd96e-141e-4edf-b18a-29ced60bf111.webp",1598],["e8/e8b79428-bfdd-4806-bed7-9d76580f9718.webp",8886],["eb/eb1726b3-6e5a-459c-8152-5772abdfb6ac.webp",1966],["f9/f98b5637-2092-4ddd-8f9a-83c93fe456be.webp",2446]]}],"half":["assets/resources/native/05/05b02a39-017c-4f04-b8e6-8f19e5156f1a.webp","assets/resources/native/0f/0fa3eaab-b862-40ac-abd1-5f9f98ce873d.webp","assets/resources/native/11/1112e949-b7a1-4785-8e4b-4b34c1671a84.webp","assets/resources/native/11/11b01d35-a7c0-4cc2-a935-080ad97711b4.webp","assets/resources/native/13/137fb1a3-c711-4c62-835e-6dd6fbb9778a.webp","assets/resources/native/27/276001d7-8de3-4e45-bc7a-4fa45d09d984.webp","assets/resources/native/2d/2d5413b4-4f84-43c4-bd5c-157b863eadba.webp","assets/resources/native/36/36103b38-2425-4332-aea2-276b2c7c7b55.webp","assets/resources/native/42/422828cc-f7c0-461b-9a23-6d560d41d8b4.webp","assets/resources/native/44/44f41cdd-b70a-4842-8512-63a078965ca1.webp","assets/resources/native/53/53d0d539-0756-4608-8979-0ca6c942b962.webp","assets/resources/native/55/55d61f15-cbd8-41a1-b14f-42f66e10aa43.webp","assets/resources/native/58/58143dfa-8a5d-41ea-9e50-b5453830ec39.webp","assets/resources/native/59/5907b416-ab55-44d9-b85e-0beab79b61da.webp","assets/resources/native/5f/5f578a66-bb52-411a-867d-29aba460e304.webp","assets/resources/native/60/603bd51b-489e-4efd-a43d-91b2832c2cdb.webp","assets/resources/native/60/605725fd-2e4f-4688-9b9c-f04ce42d99ff.webp","assets/resources/native/67/67006c18-5b62-4b4f-a609-d7976f1ce44b.webp","assets/resources/native/67/67d9e2b1-9d58-46e9-87c5-3081de80d360.webp","assets/resources/native/6b/6b5786d1-1d27-4e53-b41f-37be34754a82.webp","assets/resources/native/6d/6d95feb0-5cee-42f6-82ed-6db302c54b27.webp","assets/resources/native/6f/6fe4dbfc-7574-49c7-b3e1-46b59b1e156e.webp","assets/resources/native/74/74149457-25aa-4ab3-9d94-3fd8498752f4.webp","assets/resources/native/7d/7d56bc41-7a51-41d2-ae31-393679fd1de6.webp","assets/resources/native/7f/7f7d85a6-f9c3-4a30-94be-ce026fb01bd9.webp","assets/resources/native/81/810d14a2-74bf-4179-a3ad-e253ce852053.webp","assets/resources/native/83/8319f6dc-84fe-431b-9670-9cdfd1fc62d8.webp","assets/resources/native/84/845ab11b-77b4-4e0a-82c8-7a4edbca57ba.webp","assets/resources/native/87/87249e5d-d3af-4bae-b4c4-7d81fe1c07d0.webp","assets/resources/native/89/89cdc7b7-6b60-4c03-a335-693dc713dc9a.webp","assets/resources/native/8a/8a3d681f-b5e9-4df7-a3c7-970920fa6f2b.webp","assets/resources/native/8b/8b900d9d-83b7-47ab-a376-5c91c0d3590d.webp","assets/resources/native/8b/8bf222d3-9854-4d56-bef2-594de9034892.webp","assets/resources/native/8c/8c950869-364a-4eb8-970d-1463808e99ad.webp","assets/resources/native/8d/8d22f017-82bb-4d35-9656-4b77e3d3ff89.webp","assets/resources/native/94/94b1c080-9102-49ea-91d0-78ad557ca389.webp","assets/resources/native/95/9563b05d-0c9e-43c3-8536-0c692cc24832.webp","assets/resources/native/9a/9ab09c75-0b0e-4f65-b837-b9df8a980b9a.webp","assets/resources/native/9f/9f8c17f3-7fba-4b18-954d-23253681b33c.webp","assets/resources/native/a2/a29876ac-98c8-4b93-822e-770fe2187db7.webp","assets/resources/native/a7/a7e6ac4e-556e-4002-9afd-d6670eeab1d3.webp","assets/resources/native/bc/bcceeddf-bac6-4ed6-89b5-d02a7f5e6eb1.webp","assets/resources/native/be/bea2477c-688a-4f44-bbcf-8449cab7ca53.webp","assets/resources/native/be/bef3bc04-f4f5-4861-8a03-d75f277d1dd2.webp","assets/resources/native/bf/bfe34ab3-d42a-4ac0-8423-9c25b2300e01.webp","assets/resources/native/c2/c2dd0893-ae8b-4fd4-85a3-8d1cdd79225f.webp","assets/resources/native/c5/c55799b5-dd02-44c5-bb4b-c7c2f86880c4.webp","assets/resources/native/c9/c9e2762b-ce11-4cd0-ac88-24aab1136735.webp","assets/resources/native/d0/d0b09763-3e3f-4183-b72c-5945a7c607a9.webp","assets/resources/native/d3/d3cb1ef3-9e9e-4a14-a386-7dfd676809a3.webp","assets/resources/native/d4/d40e5f85-a0ae-453d-8e4d-276d537f022c.webp","assets/resources/native/d5/d514e584-b93b-4093-bc99-d14c46bf5a18.webp","assets/resources/native/d9/d956f01b-c9c9-4a33-886e-99e138e94b2d.webp","assets/resources/native/dd/dd616e51-2006-4ec5-a2f3-5aa8150300d2.webp","assets/resources/native/df/df4910f5-dd71-4306-a95e-3ef2f698f594.webp","assets/resources/native/df/dfbcbfff-365d-4413-87bf-3de29d6650e1.webp","assets/resources/native/e2/e2f2ecc3-f246-468c-a16a-e1c6f10aa87f.webp","assets/resources/native/e4/e4b9b6c6-7975-46ed-a071-a54319d60351.webp","assets/resources/native/f0/f073540f-ac44-4884-b22e-352dd571a81f.webp","assets/resources/native/f3/f3d32c17-8254-4ded-8845-350b05da5b33.webp","assets/resources/native/f4/f4322a24-97ed-4c27-b43c-6a19183555c7.webp","assets/resources/native/f6/f67fa711-a3e2-403f-8588-e06ef0658419.webp","assets/resources/native/f9/f90c9a76-37f4-43c0-9406-d8283380009f.webp","assets/resources/native/f9/f927d66e-fc39-45cf-8f07-3a7d19037646.webp","assets/resources/native/fe/fec4fda7-e197-4e81-8a72-5bb1a6e32986.webp"],"exts":[".bin",".png",".webp"],"weakGpu":"mali-[34]\\d\\d|mali-t\\d|mali-g(31|51|52|57)(?![0-9])|adreno[^0-9]*(3\\d\\d|4\\d\\d|5\\d\\d|60\\d|61\\d)(?![0-9])|powervr sgx|powervr rogue ge8|apple a(9|10|11)(?![0-9])"};
+      var trace = window.__loadTrace;
+      function mark(name, details) { if (trace && trace.mark) trace.mark(name, details); }
+      function flag(name) {
+        var match = new RegExp('[?&]' + name + '=([^&#]*)').exec(location.search);
+        return match ? match[1] : null;
+      }
+      if (flag('noPacks') === '1' || typeof fetch !== 'function' || typeof Promise !== 'function') return;
+      function keyOf(url) { return String(url).split(/[?#]/)[0].split('/').slice(-5).join('/'); }
+      function renderer() {
+        try {
+          var gl = document.createElement('canvas').getContext('webgl');
+          if (!gl) return '';
+          var info = gl.getExtension('WEBGL_debug_renderer_info');
+          var name = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
+          var lose = gl.getExtension('WEBGL_lose_context');
+          if (lose) lose.loseContext();
+          return name.toLowerCase();
+        } catch (e) { return ''; }
+      }
+      function weakDevice() {
+        var forced = flag('texHalf');
+        if (forced === '1' || forced === '0') return { on: forced === '1', reason: 'texHalf=' + forced };
+        var memory = navigator.deviceMemory;
+        if (typeof memory === 'number' && memory > 0 && memory <= 2) return { on: true, reason: 'deviceMemory ' + memory };
+        var gpu = renderer(), weakGpu = null;
+        try { weakGpu = new RegExp(data.weakGpu); } catch (e) { /* keep full textures */ }
+        return { on: !!gpu && !!weakGpu && weakGpu.test(gpu), reason: gpu || 'renderer unknown' };
+      }
+      var hasHalf = data.half.length > 0 || data.packs.some(function (info) { return info.group === 'tex3d-half'; });
+      var weak = hasHalf ? weakDevice() : { on: false, reason: 'no half-size textures' };
+      if (hasHalf) mark('texHalf', { weak: weak.on, reason: weak.reason });
+      // A CDN that rewrites a pack (see PACK_HEADER) sends all of its files down the loose path.
+      function intact(buffer, size) {
+        if (buffer.byteLength !== size) return false;
+        var bytes = new Uint8Array(buffer, 0, data.head.length);
+        for (var i = 0; i < data.head.length; i++) if (bytes[i] !== data.head.charCodeAt(i)) return false;
+        return true;
+      }
+      var entries = {}, total = 0, served = 0, fallback = 0;
+      function settle(ok) {
+        if (ok) served++; else fallback++;
+        if (served + fallback === total) mark('packs served', { served: served, fallback: fallback });
+      }
+      data.packs.forEach(function (info) {
+        if (info.group === (weak.on ? 'tex3d' : 'tex3d-half')) return;
+        var started = performance.now();
+        var pack = { left: info.files.length };
+        pack.data = fetch(info.url, { credentials: 'same-origin', priority: 'low' })
+          .then(function (response) {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.arrayBuffer();
+          })
+          .then(function (buffer) {
+            if (!intact(buffer, info.size)) throw new Error('content changed: ' + buffer.byteLength + ' of ' + info.size + ' bytes');
+            return buffer;
+          })
+          .then(function (buffer) {
+            mark('pack loaded', { group: info.group, kb: Math.round(buffer.byteLength / 1024), ms: Math.round(performance.now() - started) });
+            return buffer;
+          }, function (error) {
+            mark('pack failed', { url: info.url, error: String((error && error.message) || error) });
+            return null;
+          });
+        var offset = data.headSize;
+        info.files.forEach(function (file) {
+          entries[info.base + file[0]] = { pack: pack, offset: offset, size: file[1] };
+          offset += file[1];
+          total++;
+        });
+      });
+      var half = {};
+      data.half.forEach(function (key) { half[key] = true; });
+      window.__dnaPacks = {
+        weak: weak.on,
+        exts: data.exts,
+        take: function (url) {
+          var key = keyOf(url);
+          var entry = entries[key];
+          if (!entry) return null;
+          delete entries[key];
+          return entry.pack.data.then(function (buffer) {
+            if (--entry.pack.left === 0) entry.pack.data = null;
+            settle(!!buffer);
+            return buffer ? buffer.slice(entry.offset, entry.offset + entry.size) : null;
+          });
+        },
+        halfUrl: function (url) {
+          if (!weak.on || !half[keyOf(url)]) return null;
+          return String(url).split(/[?#]/)[0].replace(/\.[^./]+$/, '.half.webp');
+        }
+      };
+    })();
+  </script>
+  <script>
+    // Start-scene warm-up: the engine asks for these files only after game.init. Loading them now at low
+    // priority overlaps the cold-CDN round trips with the engine boot; the engine then reads them from the
+    // HTTP cache. Binary files go through fetch() (the engine uses XHR: no Origin header), images through
+    // <img crossorigin=anonymous> like the engine, so a CDN answering with Vary: Origin keeps one cache entry.
+    // A small probe goes first: the rest is skipped when it came from the cache (returning player) or when
+    // the CDN does not cache files for long. ?noWarmup=1 turns it off; DevTools "Disable cache" makes every
+    // file download twice.
+    (function () {
+      if (/[?&]noWarmup=1(&|$)/.test(location.search) || typeof fetch !== 'function') return;
+      var trace = window.__loadTrace;
+      var queue = ["assets/resources/import/52/52811fc7-7a3e-47a9-9ef7-a4f88bd06660.json","assets/resources/import/59/5907b416-ab55-44d9-b85e-0beab79b61da.json","assets/resources/import/5f/5f36a8f0-db90-45b4-ae88-65c527086f3b.json","assets/resources/import/6c/6cc660b7-d2bd-42d1-b1d0-d4c6d564a1a8.json","assets/resources/import/71/7118aff8-408f-4e6f-bb03-64df59c80843.json","assets/resources/import/7d/7d56bc41-7a51-41d2-ae31-393679fd1de6.json","assets/resources/import/81/810d14a2-74bf-4179-a3ad-e253ce852053.json","assets/resources/import/94/94ee8be5-ec06-4c0d-b9db-386a05b7d63e.json","assets/resources/import/b0/b0a6daf8-1237-443a-be0b-b51044c2f2b0.json","assets/resources/import/c5/c55799b5-dd02-44c5-bb4b-c7c2f86880c4.json","assets/resources/import/94/94ee8be5-ec06-4c0d-b9db-386a05b7d63e@f9941.json","assets/resources/import/71/7118aff8-408f-4e6f-bb03-64df59c80843@f9941.json","assets/resources/import/5f/5f36a8f0-db90-45b4-ae88-65c527086f3b@f9941.json","assets/resources/native/1a/1a41c24a-cae4-41d2-bcff-d69cbb523004@56f3a.bin","assets/main/native/18/1824120b-6656-414e-b5f5-6f98d870da7f.mp3","assets/resources/native/12/1263d74c-8167-4928-91a6-4e2672411f47@a804a.bin","assets/resources/import/06/06d898ce0.json","assets/main/native/77/77436f64-0d57-4d52-a3bd-0745ebb32e53.mp3","assets/main/native/e5/e5ea590e-d404-47c7-b29f-f272df15fec7.mp3","assets/main/native/f7/f78c5aa0-6332-483b-af08-def4f5991204.mp3","assets/main/native/1e/1ea72e81-d213-4bf8-8d62-b8d712aeee36.mp3","assets/main/native/c7/c7b7a97c-646a-4120-988d-60de4a5ec2c6.mp3","assets/resources/import/08/08a39fc36.json","assets/resources/import/01/01ef3bac4.json","assets/resources/import/05/05ffd74a5.json","assets/resources/import/09/09417a58d.json","assets/resources/import/0f/0f959d5fd.json","assets/resources/import/01/01e07c654.json","assets/resources/import/07/073bd2a1e.json","assets/resources/import/0e/0ef7b6073.json","assets/resources/import/07/0776f40c0.json","assets/resources/import/02/02c3abe40.json","assets/resources/import/07/071acf6de.json","assets/resources/import/0c/0c5953835.json","assets/resources/import/08/081717e52.json","assets/resources/import/04/044445e7e.json","assets/resources/import/05/0509ae33c.json","assets/resources/import/07/07b84e3b0.json","assets/resources/import/04/04b8cc625.json","assets/resources/import/06/06e623b61.json","assets/resources/import/09/09182dd40.json","assets/resources/import/0b/0b23f489d.json","assets/resources/import/0d/0de46069b.json","assets/resources/import/03/030c7065c.json","assets/resources/import/04/041960e0a.json","assets/resources/import/0f/0ff800c96.json","assets/resources/import/08/08393cca3.json","assets/resources/import/08/0831365a0.json","assets/resources/native/1a/1a3be4f8-877d-4fec-9856-664033178f18@637f1.bin","assets/main/native/0d/0d7099ac-79e3-4223-89cd-2b90a8c43194.mp3","assets/main/native/a0/a0e1089f-8b2b-4207-adf6-7bdc28d891b7.mp3","assets/main/native/fe/fe3b8d15-4246-4283-984b-8bf199d5a595.mp3","assets/resources/import/0c/0ce709388.json","assets/main/native/5c/5c879693-3754-4521-9e17-f4441043fa92.mp3","assets/main/native/ea/ea03e08d-8c0b-4a53-be73-92a2d3bbc7ac.mp3","assets/main/native/95/95a28576-0200-4dcc-bb7d-7a28eada2dd7.mp3","assets/main/import/14/14d92645-b914-4dc2-a24c-fde9774f2aaa.bin","assets/main/native/c1/c1898ce4-7310-4c9b-a236-781a557a6365.mp3","assets/main/import/6b/6ba67c5c-bde9-438d-bb77-7d87e8420382@c2696.bin","assets/main/import/d2/d25d542c-dc77-4dd6-a8e5-4fb6db37d8a4.bin","assets/main/native/e5/e59f5a51-b188-4fd7-ae5c-b9f9a06fb474.mp3","assets/main/native/fe/fec16d34-f3e6-4696-845a-718f9abbb184.mp3","assets/resources/native/12/1263d74c-8167-4928-91a6-4e2672411f47@2e76e.bin","assets/resources/native/7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@3fe7a.bin","assets/resources/native/7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@b0e92.bin","assets/main/import/0a/0a51eb2d-b8df-4566-bdd1-4d29ced474d0.bin","assets/resources/native/7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@013f6.bin","assets/main/native/f9/f9ac1f50-0331-4fac-973b-e8b33de2994c.mp3","assets/resources/native/da/daf1206d-9d3f-4e6c-b410-e92bfd9e9a11@1d514.bin","assets/main/native/0b/0ba91696-7c7d-4059-bf89-f4d4aa1641b9.mp3","assets/main/native/3b/3b633cbd-d7c5-4264-b892-c7cdf82b801f.mp3","assets/main/native/67/6713e6c9-fbbc-46da-adab-010b666cee38.mp3","assets/resources/native/22/22e8884b-2234-4fb9-a4bb-9f6fc38fbffa@49206.bin","assets/resources/native/7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@69b94.bin","assets/main/native/fa/fad77657-328d-4825-b0b8-a88a520bf8a7.mp3","assets/resources/native/7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@27040.bin","assets/resources/import/03/03971eb15.json","assets/resources/native/7e/7e2edadf-c47a-44b5-919b-44f7c107f06a@6ed97.bin","assets/resources/import/0b/0ba3303b5.json","assets/main/native/88/88bdb3f2-18a3-487d-8af1-ac3cec5df61b.mp3","assets/resources/import/03/038483155.json","assets/resources/import/0a/0adf89f50.json","assets/resources/native/29/29895ace-6a77-4add-ae82-24c2f8d22aec@b72a3.bin","assets/resources/import/0e/0e2c9eb3c.json","assets/resources/import/02/02f476c14.json","assets/resources/import/5f/5fd6795c-ab46-4e4f-9629-0a5e40e5d0ba.json","assets/resources/import/03/03bef74f3.json","assets/main/native/c9/c9c31afb-0262-4461-a08f-54006fed5e25.mp3","assets/main/native/6e/6e49a871-de60-4475-b4d6-1ae75e5f23ff.mp3","assets/resources/import/36/36f42eb2-fffa-4dd5-b66e-34b1e5e1c7e7.json","assets/main/import/93/93ecaea2-df64-4b38-92d9-d889b627f2a6@05ec8.bin","assets/resources/native/09/09e2bf81-c28c-4904-9be9-086bce5893b2@2cc4a.bin","assets/resources/native/27/2792996a-e5e5-45aa-a60b-bc82789b4b04@5d5fa.bin","assets/resources/native/5a/5a391c14-9bb2-426e-acba-0df3c4e9ff59@1f646.bin","assets/main/import/93/93ecaea2-df64-4b38-92d9-d889b627f2a6@c31f2.bin","assets/resources/import/09/09195487e.json","assets/resources/import/08/081a61f6b.json","assets/resources/import/05/056300a2d.json"].map(function (url) { return [url, 0]; })
+        .concat(["assets/resources/native/52/52811fc7-7a3e-47a9-9ef7-a4f88bd06660.webp","assets/resources/native/59/5907b416-ab55-44d9-b85e-0beab79b61da.webp","assets/resources/native/5f/5f36a8f0-db90-45b4-ae88-65c527086f3b.webp","assets/resources/native/6c/6cc660b7-d2bd-42d1-b1d0-d4c6d564a1a8.webp","assets/resources/native/71/7118aff8-408f-4e6f-bb03-64df59c80843.webp","assets/resources/native/7d/7d56bc41-7a51-41d2-ae31-393679fd1de6.webp","assets/resources/native/81/810d14a2-74bf-4179-a3ad-e253ce852053.webp","assets/resources/native/94/94ee8be5-ec06-4c0d-b9db-386a05b7d63e.webp","assets/resources/native/b0/b0a6daf8-1237-443a-be0b-b51044c2f2b0.png","assets/resources/native/c5/c55799b5-dd02-44c5-bb4b-c7c2f86880c4.webp"].map(function (url) { return [url, 1]; }));
+      if (!queue.length || queue[0][1]) return;
+      var probe = queue[0][0], next = 1, running = 0, done = 1, started = performance.now();
+      function finish() {
+        running--;
+        if (++done === queue.length) trace?.mark('scene warm-up done', { files: done, ms: Math.round(performance.now() - started) });
+        pump();
+      }
+      function load(item) {
+        if (item[1]) {
+          // A weak device loads the half-size copy of a 3D texture (native-packs.js), so warm that one.
+          var packs = window.__dnaPacks;
+          var img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.decoding = 'async';
+          img.fetchPriority = 'low';
+          img.onload = img.onerror = function () { img.onload = img.onerror = null; finish(); };
+          img.src = (packs && packs.halfUrl(item[0])) || item[0];
+          return;
+        }
+        fetch(item[0], { priority: 'low', credentials: 'same-origin' })
+          .then(function (response) { return response.arrayBuffer(); })
+          .catch(function () {})
+          .then(finish);
+      }
+      function pump() {
+        while (running < 48 && next < queue.length) {
+          running++;
+          load(queue[next++]);
+        }
+      }
+      fetch(probe, { cache: 'force-cache', priority: 'low', credentials: 'same-origin' })
+        .then(function (response) {
+          var cacheControl = response.headers.get('cache-control') || '';
+          return response.arrayBuffer().then(function () {
+            var entry = performance.getEntriesByName(new URL(probe, location.href).href).pop();
+            if (entry && entry.transferSize === 0 && entry.decodedBodySize > 0) {
+              trace?.mark('scene warm-up skipped: files already cached');
+              return;
+            }
+            var maxAge = /max-age=(\d+)/.exec(cacheControl);
+            if (!/immutable/.test(cacheControl) && !(maxAge && +maxAge[1] >= 86400)) {
+              trace?.mark('scene warm-up off: files are not cached for long', { cacheControl: cacheControl });
+              return;
+            }
+            trace?.mark('scene warm-up start', { files: queue.length });
+            pump();
+          });
+        })
+        .catch(function () {});
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# Chan Git tu dong sua doi CRLF thanh LF lam hong file engine (Defold, Unity,...)
+* -text
+archive/* binary
+*.projectc* binary
+*.arci* binary
+*.arcd* binary
+*.dmanifest* binary
+*.bin binary
+*.data binary
+*.wasm binary
+*.bundle binary
